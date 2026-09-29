@@ -7,7 +7,8 @@
 
         powershell -ExecutionPolicy Bypass -File .\uninstall.ps1
 
-    Stops and removes the DeckBtService service, then reverses the changes recorded by install.ps1
+    Stops and removes the DeckBtService service (only the one install.ps1 registers, running
+    %ProgramFiles%\DeckBtService\deckbt-usbip.exe), then reverses the changes recorded by install.ps1
     in %ProgramData%\DeckBtService\install-state.json, newest first: the program folder, the
     published UART (SerCxFriendlyName) and the stock-transport deny policy, after which the stock
     driver (qcbtuart.sys) is installed on ACPI\QCOM2066 again. Without a readable install record (a
@@ -563,8 +564,13 @@ function Remove-DeckBtService {
         return
     }
     Write-Log "Service: $ServiceName registered as $($config.PathName), state $($config.State)"
-    $registeredExe = if ($config.PathName -match '^\s*"([^"]+)"') { $Matches[1] } else { ($config.PathName -split '\s+')[0] }
-    $exe = if (Test-Path -LiteralPath $ServiceExe) { $ServiceExe } elseif (Test-Path -LiteralPath $registeredExe) { $registeredExe } else { $null }
+    $registeredExe = if ("$($config.PathName)" -match '^\s*"([^"]+)"') { $Matches[1] } else { ("$($config.PathName)" -split '\s+')[0] }
+    # install.ps1 registers only $ServiceExe and refuses to replace another program's service.
+    if ($registeredExe -ne $ServiceExe) {
+        Write-Log "    it runs another program, not $ServiceExe; left as it is"
+        return
+    }
+    $exe = if (Test-Path -LiteralPath $ServiceExe) { $ServiceExe } else { $null }
     $how = if ($null -ne $exe) { "'$exe uninstall' (falls back to sc.exe)" } else { 'sc.exe stop / sc.exe delete' }
     Invoke-Step 'remove-service' "Stop $ServiceName (detaches the radio) and delete it with $how" {
         $removed = $false

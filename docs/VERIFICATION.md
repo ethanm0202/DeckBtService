@@ -29,7 +29,7 @@ The usbip-win2 defect below was traced with Windows' ETW providers for BTHPORT, 
 
 ### Host-side suites
 
-`tools\selftest.cmd` (see [BUILD.md](BUILD.md)) builds and runs 12 suites against the production sources, then compares the synthetic controller's descriptors and HCI exchanges with the reference record. All pass.
+`tools\selftest.cmd` (see [BUILD.md](BUILD.md)) builds and runs 13 suites against the production sources, then compares the synthetic controller's descriptors and HCI exchanges with the reference record. All pass.
 
 | Suite | Covers |
 |---|---|
@@ -41,17 +41,19 @@ The usbip-win2 defect below was traced with Windows' ETW providers for BTHPORT, 
 | `h4_selftest` | H4 framing and removal of in-band sleep bytes |
 | `bridge_selftest` | HCI bridge: readiness, ACL credits, link and address tracking, RFCOMM detection in both directions, clean-disconnect sequence |
 | `sco_usb_selftest`, `sco_route_selftest` | voice framing and pacing; rewriting to the enhanced synchronous-connection commands |
-| `usbip_device_selftest` | device model: cross-endpoint ordering in both directions, the 20 ms hold, arrival order with both reads parked, a lost ACL packet delivered ahead of a later event, replay order after repeated cancellation, a fresh hold for each new blockage |
+| `qca_backend_selftest` | the controller backend against a simulated controller behind a mocked UART: full bring-up, host in-band-sleep wake acknowledged on the first or third try or never (the start then fails and hands the controller back), restart after a failed start |
+| `usbip_device_selftest` | device model: cross-endpoint ordering in both directions, the 20 ms hold, arrival order with both reads parked, a lost ACL packet delivered ahead of a later event, replay order after repeated cancellation, a fresh hold for each new blockage, isochronous descriptors out of order, overlapping or longer than the setting's `wMaxPacketSize` |
 
 The service and the UART probe build with MSVC `/W4 /WX`.
 
 ### Socket regression tests
 
-`tools/usbip_selftest.py` runs 7 tests against real server processes (stub backend):
+`tools/usbip_selftest.py` runs 8 tests against real server processes (stub backend):
 
 - silent and fragmented clients do not block device listing;
 - an import sent slowly hits its absolute deadline;
 - an import from a user-mode process is refused, even with no session active;
+- a refused import's bus ID cannot add lines to the log (CR, LF, `\` and `'` are escaped);
 - a rejected isochronous request does not consume the next reply;
 - a reply unlinked in flight is delivered again, in order (this test fails without the replay mechanism);
 - stop with all eight handshake slots occupied;

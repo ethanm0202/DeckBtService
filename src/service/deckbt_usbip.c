@@ -234,6 +234,23 @@ HexBytes(const unsigned char *Data, unsigned long Length, char *Out, size_t OutS
     return Out;
 }
 
+/* Client-supplied text for one log line: printable ASCII as is; control bytes, \ and ' as \xHH. */
+static const char *
+EscapeForLog(const char *Text, char *Out, size_t OutSize)
+{
+    size_t used = 0;
+
+    for (const unsigned char *p = (const unsigned char *)Text; *p != '\0' && used + 5u <= OutSize; p++) {
+        if (*p >= 0x20u && *p < 0x7Fu && *p != '\\' && *p != '\'') {
+            Out[used++] = (char)*p;
+        } else {
+            used += (size_t)snprintf(Out + used, OutSize - used, "\\x%02X", *p);
+        }
+    }
+    Out[used] = '\0';
+    return Out;
+}
+
 /* EP0 trace, under g_Lock. HCI commands are logged by opcode; standard requests in full. */
 static void
 TraceControl(void *Context, const unsigned char Setup[8], const unsigned char *Data,
@@ -415,18 +432,14 @@ ControllerFault(void *Context, const char *Why)
 
 /* ------------------------------------------------------------------ threads */
 
+/* Owns Parameter, the high-resolution timer ServerStart created. Runs until g_Stop. */
 static DWORD WINAPI
 PacingThread(LPVOID Parameter)
 {
-    HANDLE timer = CreateWaitableTimerExW(NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
-                                          TIMER_ALL_ACCESS);
+    HANDLE timer = (HANDLE)Parameter;
     HANDLE waits[2];
+    int timerFailing = 0;
 
-    (void)Parameter;
-    if (timer == NULL) {
-        Log("pacing: CreateWaitableTimerExW failed (%lu); pacing disabled", GetLastError());
-        return 1;
-    }
     waits[0] = g_Kick;
     waits[1] = timer;
     while (!g_Stop) {
@@ -447,7 +460,15 @@ PacingThread(LPVOID Parameter)
 
             due.QuadPart = -(LONGLONG)(next - now);
             if (SetWaitableTimer(timer, &due, 0, NULL, NULL, FALSE)) {
+                timerFailing = 0;
                 (void)WaitForMultipleObjects(2, waits, FALSE, INFINITE);
+            } else {
+                /* Coarser pacing until the timer works again, never a busy loop. */
+                if (!timerFailing) {
+                    Log("pacing: SetWaitableTimer failed (%lu); waiting in whole milliseconds", GetLastError());
+                    timerFailing = 1;
+                }
+                (void)WaitForSingleObject(g_Kick, (DWORD)((next - now + 9999u) / 10000u));
             }
         }
     }
@@ -597,7 +618,9 @@ ServeConnection(SOCKET Socket, const struct sockaddr_in *Peer, DWORD Pid, const 
         if (!SendAll(Socket, reply, 8u + size) || status != USBIP_ST_OK) {
             LeaveCriticalSection(&g_Lock);
             if (logged) {
-                Log("import of '%s' refused (status %lu)", busId, status);
+                char escaped[USBIP_BUSID_SIZE * 4u + 1u];
+
+                Log("import of '%s' refused (status %lu)", EscapeForLog(busId, escaped, sizeof(escaped)), status);
             }
             closesocket(Socket);
             return;
@@ -1253,7 +1276,7 @@ ServerStart(void)
     WSADATA wsa;
     struct sockaddr_in address;
     BOOL exclusive = TRUE;
-    HANDLE thread;
+    HANDLE timer;
 
     if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
         return ERROR_NETWORK_UNREACHABLE;
@@ -1298,12 +1321,23 @@ ServerStart(void)
             return (DWORD)WSAGetLastError();
         }
     }
-    g_Pacing = CreateThread(NULL, 0, PacingThread, NULL, 0, NULL);
-    thread = CreateThread(NULL, 0, AcceptThread, NULL, 0, NULL);
-    if (g_Pacing == NULL || thread == NULL) {
+    /* Pacing drives SCO completions and the order-hold deadline: no timer, no start. */
+    timer = CreateWaitableTimerExW(NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+    if (timer == NULL) {
+        DWORD error = GetLastError();
+        Log("pacing: CreateWaitableTimerExW failed (%lu)", error);
+        return error;
+    }
+    g_Pacing = CreateThread(NULL, 0, PacingThread, timer, 0, NULL);
+    if (g_Pacing == NULL) {
+        DWORD error = GetLastError();
+        CloseHandle(timer);
+        return error;
+    }
+    g_Acceptor = CreateThread(NULL, 0, AcceptThread, NULL, 0, NULL);
+    if (g_Acceptor == NULL) {
         return GetLastError();
     }
-    g_Acceptor = thread;
     Log("DeckBtService: %s backend, listening on 127.0.0.1:%u, busid %s", g_UseUart ? "uart" : "stub",
         g_Port, g_BusId);
     return ERROR_SUCCESS;

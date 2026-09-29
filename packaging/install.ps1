@@ -11,7 +11,8 @@
     Administrators; SYSTEM and Administrators full control, Users read) and refuses a junction there.
 
     Steps, each logged to %ProgramData%\DeckBtService\install.log:
-      1. check the hardware (Steam Deck OLED only) and the release files against SHA256SUMS;
+      1. check the hardware (Steam Deck OLED only) and the release files against SHA256SUMS, and refuse
+         a DeckBtService service that runs another program (it is never replaced);
       2. install usbip-win2 0.9.8.1 (downloaded from its official GitHub release, SHA-256 pinned);
       3. switch the stock Bluetooth transport (qcbtuart.sys on ACPI\QCOM2066) off with a
          device-installation deny policy;
@@ -714,6 +715,23 @@ function Assert-Firmware {
     Write-Log "Radio firmware package: $($dirs[0].FullName)"
 }
 
+# The executable a service's command line starts with.
+function Get-ServiceExePath {
+    param($Config)
+    if ("$($Config.PathName)" -match '^\s*"([^"]+)"') { return $Matches[1] }
+    return ("$($Config.PathName)" -split '\s+')[0]
+}
+
+# A DeckBtService that runs another program is not ours to stop, delete or replace: its configuration
+# (account, start type, dependencies, recovery) could not be restored on uninstall.
+function Assert-ServiceName {
+    $config = Get-CimInstance -ClassName Win32_Service -Filter "Name='$ServiceName'"
+    if ($null -eq $config) { return }
+    if ((Get-ServiceExePath $config) -ne $ServiceExe) {
+        throw "A service named $ServiceName already exists and runs '$($config.PathName)', not $ServiceExe. install.ps1 does not replace another program's service; remove that service first, then run install.ps1 again."
+    }
+}
+
 # ------------------------------------------------------------------ steps
 
 function Stop-ExistingService {
@@ -1003,25 +1021,15 @@ function Install-Files {
 }
 
 function Register-DeckBtService {
+    # Assert-ServiceName refused a registration that runs another program.
     $config = Get-CimInstance -ClassName Win32_Service -Filter "Name='$ServiceName'"
     if ($null -ne $config) {
-        $registeredExe = if ($config.PathName -match '^\s*"([^"]+)"') { $Matches[1] } else { ($config.PathName -split '\s+')[0] }
-        if ($registeredExe -eq $ServiceExe) {
-            Write-Log "Service: registered as $($config.PathName)"
-            return
-        }
-        Invoke-Step 'reregister-service' "Remove $ServiceName registered to '$registeredExe' and register $ServiceExe (install --backend uart)" {
-            if ($null -eq (Get-Change 'service')) {
-                Add-Change ([pscustomobject]@{ type = 'service'; priorImagePath = $config.PathName })
-            }
-            Invoke-Native $ServiceExe @('uninstall') | Out-Null
-            Invoke-Native $ServiceExe @('install', '--backend', 'uart') -ExitMessages $InstallExitMessages | Out-Null
-        }
+        Write-Log "Service: registered as $($config.PathName)"
         return
     }
     Invoke-Step 'register-service' "Register ${ServiceName}: $ServiceExe install --backend uart (LocalSystem, automatic start, restart on failure)" {
         if ($null -eq (Get-Change 'service')) {
-            Add-Change ([pscustomobject]@{ type = 'service'; priorImagePath = $null })
+            Add-Change ([pscustomobject]@{ type = 'service' })
         }
         Invoke-Native $ServiceExe @('install', '--backend', 'uart') -ExitMessages $InstallExitMessages | Out-Null
     }
@@ -1067,6 +1075,7 @@ try {
     $radio = Assert-Hardware
     $releaseHashes = Assert-ReleaseFiles
     Assert-Firmware
+    Assert-ServiceName
 
     Initialize-DataDir -CreateMissing | Out-Null
     if (-not $DryRun) {

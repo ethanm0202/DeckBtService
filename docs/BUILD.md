@@ -72,7 +72,8 @@ No elevation and no hardware. Each suite compiles production sources into a user
 | `bridge_selftest` | `hci_bridge.c` | readiness hold, vendor-event filtering, ACL credits (shared and LE pools, refill on `HCI_Reset`) |
 | `sco_usb_selftest` | `sco_usb.c` | SCO pacing, OUT reassembly and resynchronisation, IN re-framing |
 | `sco_route_selftest` | `sco_route.c` | enhanced synchronous-connection rewrite and opcode restore |
-| `usbip_device_selftest` | `usbip_device.c` | event/ACL delivery in controller order across both endpoints, the 20 ms hold bound, a lost reply delivered again in order |
+| `usbip_device_selftest` | `usbip_device.c` | event/ACL delivery in controller order across both endpoints, the 20 ms hold bound, a lost reply delivered again in order, isochronous descriptor checks (order, overlap, no packet above the setting's `wMaxPacketSize`) |
+| `qca_backend_selftest` | `qca_backend.c` (UART mocked) | `QcaBackendStart`/`QcaBackendStop` against a simulated controller with the real firmware: identify ladder, baud switch, download, host IBS wake acknowledged on the first or third `WAKE_IND` or never (start fails with `ERROR_TIMEOUT`, no writer, controller handed back to ROM at 115200), restart after a failed start |
 
 It then runs `tools\check-reference.cmd`, which regenerates the stub's descriptors and HCI exchanges with `tools\refdump.c` and compares them with `reference\VIRTUAL-HCI-REFERENCE.txt`. A difference means the USB device changed; if intended, run `tools\refdump.cmd` and commit the new reference.
 
@@ -82,13 +83,15 @@ The QCA suites read the firmware from the newest installed `qcbtuart.inf_amd64_*
 
 After building, run `python tools\usbip_selftest.py` (Python 3, standard library only;
 `DECKBT_USBIP_EXE` selects another build). It launches isolated console stub servers on temporary
-loopback ports, without UART access or usbip-win2 attachment. Seven regressions cover rejected
+loopback ports, without UART access or usbip-win2 attachment. Eight regressions cover rejected
 isochronous replies followed by a valid request, a reply unlinked in flight being delivered again,
-silent and fragmented clients, absolute handshake deadlines, non-kernel import denial, and shutdown
-with all pending handshake slots occupied or with a live session.
+silent and fragmented clients, absolute handshake deadlines, non-kernel import denial, a refused
+bus ID that cannot add lines to the log, and shutdown with all pending handshake slots occupied or
+with a live session.
 
 `tools\fuzz.cmd 60` builds two libFuzzer/AddressSanitizer targets and runs **each** for 60 seconds.
-`fuzz_usbip_device` checks the request parser, device model and reply framing;
+`fuzz_usbip_device` checks the request parser, device model and reply framing, including that no
+accepted isochronous packet exceeds its setting's `wMaxPacketSize`;
 `fuzz_controller` checks H4/controller parsing and the bridge. Corpus files and crash inputs stay
 under `tools\_build\fuzz`; a sanitizer report or failed invariant makes the command fail.
 These tests do not prove hardware voice quality or kernel-driver safety.
@@ -107,7 +110,7 @@ tools\package.cmd
 
 Then extract `dist\DeckBtService-<version>.zip` and double-click its `install.cmd`, or run its `install.ps1` from an elevated 64-bit Windows PowerShell. Without `DECKBT_ALLOW_DIRTY`, `package.cmd` refuses a tree with uncommitted changes, so a release always names a real commit.
 
-`install.ps1` makes these changes, in order, and records each with its prior value in `%ProgramData%\DeckBtService\install-state.json`. Re-running it resumes an interrupted install or upgrades the programs.
+`install.ps1` makes these changes, in order, and records each with its prior value in `%ProgramData%\DeckBtService\install-state.json`. Re-running it resumes an interrupted install or upgrades the programs. Before any of them it refuses a `DeckBtService` service that runs another program; that service is never replaced.
 
 1. **usbip-win2 0.9.8.1.** Downloaded from the official release and checked against a pinned SHA-256 if missing or older. 0.9.8.0 breaks headset reconnects ([issue #190](https://github.com/vadimgrn/usbip-win2/issues/190)); its installer can ask for a restart.
 2. **Stock transport off.** A device-installation deny policy for `ACPI\QCOM2066`. Then Bluetooth is switched off (the Settings toggle, so headsets disconnect) and the radio's devnode is removed and rescanned, so it returns without a driver (problem 28 or 1). Removing it while a headset streams through the stock driver blocks inside PnP, so the removal is given 90 s and a restart is requested instead.
@@ -115,7 +118,7 @@ Then extract `dist\DeckBtService-<version>.zip` and double-click its `install.cm
 4. **Programs.** Copied to `%ProgramFiles%\DeckBtService` (SYSTEM and Administrators full control, Users read and execute) and verified against `SHA256SUMS`.
 5. **Service.** Registered with the installed `deckbt-usbip.exe install --backend uart`, started, and confirmed by `attach: usbip-win2 port` in the log.
 
-`uninstall.ps1` reverses the record newest first and puts the stock driver back on the radio. On a setup without a record it detects and reverts the same changes. `collect-diagnostics.ps1` bundles logs and device state (never pairing keys) into a zip on the Desktop.
+`uninstall.ps1` reverses the record newest first and puts the stock driver back on the radio. On a setup without a record it detects and reverts the same changes. It removes the `DeckBtService` service only when it runs `%ProgramFiles%\DeckBtService\deckbt-usbip.exe`. `collect-diagnostics.ps1` bundles logs and device state (never pairing keys) into a zip on the Desktop.
 
 To check that the controller answers from user mode once the UART is published and the service is stopped: `"%ProgramFiles%\DeckBtService\deckbt-uartprobe.exe"` (expected: `answered at 115200 baud (ROM); SoC 0x400C1211`).
 

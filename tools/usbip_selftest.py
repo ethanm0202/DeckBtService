@@ -57,7 +57,7 @@ def reply(sock, out=()):
 
 
 @contextlib.contextmanager
-def server(allow_import=False):
+def server(allow_import=False, log=None):
     with tempfile.TemporaryDirectory(prefix="deckbt-usbip-test-") as temp:
         stop = pathlib.Path(temp) / "stop"
         with socket.socket() as reserve:
@@ -67,6 +67,8 @@ def server(allow_import=False):
                 "--stop-file", str(stop), "--quiet"]
         if allow_import:
             args.append("--allow-user-import")
+        if log is not None:
+            args += ["--log", str(log)]
         process = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         try:
             deadline = time.monotonic() + 10
@@ -145,6 +147,20 @@ class SocketTests(unittest.TestCase):
             self.assertEqual((version, code), (0x111, 3))
             self.assertNotEqual(status, 0)
             self.assertEqual(sock.recv(1), b"")
+
+    def test_refused_bus_id_cannot_forge_log_lines(self):
+        forged = b"1-1\r\n  999.000 forged\\'"
+        with tempfile.TemporaryDirectory(prefix="deckbt-usbip-log-") as temp:
+            log = pathlib.Path(temp) / "server.log"
+            with server(log=log) as port:
+                sock = self.connect(port)
+                sock.sendall(OP.pack(0x111, 0x8003, 0) + forged.ljust(32, b"\0"))
+                self.assertNotEqual(OP.unpack(receive(sock, 8))[2], 0)
+                self.assertEqual(sock.recv(1), b"")
+            lines = log.read_bytes().split(b"\r\n")
+        hits = [line for line in lines if b"forged" in line]
+        self.assertEqual(len(hits), 1, hits)
+        self.assertIn(b"import of '1-1\\x0D\\x0A  999.000 forged\\x5C\\x27' refused", hits[0])
 
     def test_rejected_iso_does_not_consume_next_reply(self):
         with server(allow_import=True) as port:

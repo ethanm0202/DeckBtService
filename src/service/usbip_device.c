@@ -316,10 +316,9 @@ ScoCompleteIn(USBIP_DEVICE *Device, const USBIP_ISO_URB *Urb)
     unsigned long isoLength;
 
     for (unsigned long i = 0; i < Urb->Packets; i++) {
-        unsigned long capacity = MinUl(Urb->Length[i], Urb->MaxPacket);
-
-        actual[i] = (capacity == 0) ? 0u
-                  : ScoUsbInFill(&Device->ScoIn, Urb->MaxPacket, Device->Scratch + total, capacity,
+        /* ScoSubmit accepted no packet longer than Urb->MaxPacket. */
+        actual[i] = (Urb->Length[i] == 0) ? 0u
+                  : ScoUsbInFill(&Device->ScoIn, Urb->MaxPacket, Device->Scratch + total, Urb->Length[i],
                                  ScoPull, Device);
         total += actual[i];
     }
@@ -388,12 +387,15 @@ ScoSubmit(USBIP_DEVICE *Device, unsigned long Seqnum, int In, unsigned long Leng
     urb->Bytes = 0;
     urb->MaxPacket = maxPacket;
     urb->StartFrame = (long)((Now / SCO_USB_FRAME_100NS) & 0x7FFFFFFFull);
-    /* In order and apart, so the packets never total more than the transfer (or send bytes twice). */
+    /*
+     * In order and apart, so the packets never total more than the transfer (or send bytes twice),
+     * and none longer than the setting's wMaxPacketSize, the most one 1 ms frame carries.
+     */
     for (unsigned long i = 0, end = 0; i < Packets; i++) {
         unsigned long offset = UsbipGet32(Iso + i * USBIP_ISO_DESC_SIZE + 0);
         unsigned long length = UsbipGet32(Iso + i * USBIP_ISO_DESC_SIZE + 4);
 
-        if (offset < end || offset > Length || length > Length - offset) {
+        if (offset < end || offset > Length || length > Length - offset || length > maxPacket) {
             ScoReject(Device, Seqnum);
             return;
         }

@@ -125,7 +125,7 @@ Anything else is stalled (`-EPIPE`). Interrupt and bulk IN transfers are parked 
 - OUT bytes are queued with their due time (at most 128 ms ahead) and released to the controller at that time; HCI SCO packets are reassembled from the stream.
 - The controller chooses its own SCO packet size. IN data is re-cut into the geometry a USB controller produces for the selected setting; frames with nothing to send carry zero bytes.
 
-A pacing thread waits on a high-resolution waitable timer until the next transfer is due and completes it with `USBIP_RET_SUBMIT`. Isochronous IN data is sent compacted (packets back to back), as usbip-win2 expects.
+A pacing thread waits on a high-resolution waitable timer until the next transfer is due and completes it with `USBIP_RET_SUBMIT`. The timer is created before the server starts; a server that cannot create it does not start. If arming it ever fails, the thread logs once and waits in whole milliseconds until it works again, rather than spinning. Isochronous IN data is sent compacted (packets back to back), as usbip-win2 expects.
 
 ## The USB/IP server
 
@@ -134,7 +134,8 @@ A pacing thread waits on a high-resolution waitable timer until the next transfe
 - Accepts imports only from the kernel (see [Security](#security)).
 - Eight fixed pending-handshake slots, each with a two-second absolute deadline. Silent or trickling clients do not block other connections; a kernel client can evict a non-kernel pending handshake when all slots are full. Device listing remains available to user mode.
 - Sends have a bounded timeout; a failed send closes the session and enters recovery.
-- Rejected isochronous requests advertise zero packet descriptors in the reply rather than a count with no corresponding bytes. A full voice-transfer queue completes the overflowing request at once with valid framing.
+- Isochronous requests are rejected (`-EINVAL`) when their packet descriptors overlap, run out of order or past the transfer, or describe a packet longer than the selected alternate setting's `wMaxPacketSize` (the most one 1 ms frame carries; the endpoints declare no additional transactions). Rejected isochronous requests advertise zero packet descriptors in the reply rather than a count with no corresponding bytes. A full voice-transfer queue completes the overflowing request at once with valid framing.
+- A refused import logs the client's bus ID with control characters, `\` and `'` escaped as `\xHH`, so a local client cannot add lines to the service log.
 
 ## Reaching the controller from user mode
 
@@ -156,7 +157,7 @@ The controller's ACPI node (`\_SB.FUR4.QTBT`) defines only `_HID`, `_CID`, `_DDN
 1. **Firmware.** The rampatch (a TLV file, Qualcomm's type-length-value firmware format) and the NVM configuration files are read from the newest installed Qualcomm package (`qcbtuart.inf_amd64_*` in the DriverStore) and validated before anything is sent.
 2. **Reach ROM state.** Identify at 115200 baud (then 3,000,000 and 3,200,000). A controller left running firmware is reset (in-band wake, SoC reset) and must then answer at 115200.
 3. **Bring-up.** 3,000,000 baud, rampatch, board ID, NVM, logging off, `HCI_Reset`. About 3.5 s from ROM.
-4. **Steady state.** Reads complete on the first byte; the host wakes the controller with an in-band sleep (IBS) `WAKE_IND` until it answers `WAKE_ACK`; the HCI bridge becomes ready.
+4. **Steady state.** Reads complete on the first byte; the host wakes the controller with an in-band sleep (IBS) `WAKE_IND` until it answers `WAKE_ACK`, at most 10 times 100 ms apart; without an acknowledgement the start fails and the controller is handed back. The HCI bridge then becomes ready. The host never sends `SLEEP_IND`, so its transmit side stays awake for the session ([QCA2066.md](QCA2066.md#in-band-sleep)).
 5. **Serve.** HCI traffic moves between the device and the UART in H4 framing (one packet-type byte before each HCI packet).
 6. **Hand back.** On stop, the controller is reset to ROM at 115200, so the stock driver can take it again.
 
@@ -190,7 +191,7 @@ Two edits to HCI traffic, both following the stock driver or upstream Linux:
 
 **Start.**
 
-1. **Server.** Listener, accept and pacing threads, device model. Imports are refused (`ST_NA`) until the radio is up.
+1. **Server.** Listener, accept and pacing threads, device model. The pacing thread's high-resolution timer is created first; without it the start fails. Imports are refused (`ST_NA`) until the radio is up.
 2. **Radio.** Controller bring-up, then `usbip.exe attach --receive-mode low-latency` for its own bus ID; usbip-win2's driver connects back from the kernel and imports the device. The default zero-copy receive mode is avoided because it completes transfers before unlocking their memory pages ([VERIFICATION.md](VERIFICATION.md#bugcheck-0x4e-in-usbip-win2-zero-copy-receive)). The root-hub port reported by `attach` is kept for the detach. In the service, a failed start is retried every 3 s, up to 20 attempts, since at boot or right after resume the UART or usbip-win2 may not be ready yet.
 
 **Sleep and resume.** The controller loses its firmware in S3. On `PBT_APMSUSPEND` (`PowerRegisterSuspendResumeNotification`) every open link is disconnected cleanly, then the device is detached, the session drains, the controller is handed back and the UART closed, all before the system sleeps. On resume the radio is started again: bring-up, attach. Windows sees the adapter unplugged and plugged back in.
@@ -230,7 +231,7 @@ DeckBtService runs as LocalSystem and opens a TCP port, so its exposure is limit
 
 `packaging/install.ps1` (started by `install.cmd`, which asks for administrator rights) makes these changes and records each one, with its prior value, in `%ProgramData%\DeckBtService\install-state.json`:
 
-1. checks the hardware (Steam Deck OLED only; the LCD model is refused) and the release files against `SHA256SUMS`;
+1. checks the hardware (Steam Deck OLED only; the LCD model is refused), the release files against `SHA256SUMS`, and that no other program's service is named `DeckBtService`;
 2. installs usbip-win2 0.9.8.1, downloaded from its GitHub release, if it is missing or older;
 3. switches the stock Bluetooth transport off with a device-installation deny policy for `ACPI\QCOM2066`, after switching Bluetooth off so no link or audio stream holds the stock radio;
 4. publishes the UART to user mode (`SerCxFriendlyName` on `ACPI\AMDI0020\4`);
@@ -246,6 +247,7 @@ What the scripts trust and check:
 - **usbip-win2.** The installer is downloaded over HTTPS from the project's GitHub release and must match a SHA-256 pinned in `install.ps1` before it runs. Its drivers carry Microsoft signatures.
 - **Folders.** The data folder is created or repaired with the service's permissions before anything is read from or written to it, and a junction there is refused.
 - **Deny policy.** Deny entries that DeckBtService did not add are left alone and their policy flags restored on uninstall; when enabling the policy would also enforce such entries, the installer logs a warning.
+- **Service name.** A `DeckBtService` service that runs anything other than `%ProgramFiles%\DeckBtService\deckbt-usbip.exe` is refused before any change and never stopped, replaced or deleted, by the installer or the uninstaller: a replaced registration's account, start type, dependencies and recovery settings could not be restored.
 - **Environment.** 64-bit PowerShell only; `-DryRun` prints every check and planned change without changing anything.
 
 ## Differences from stock Bluetooth

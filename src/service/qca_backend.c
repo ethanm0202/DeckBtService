@@ -752,8 +752,12 @@ EnterSteady(QCA_BACKEND *B)
     if (error != ERROR_SUCCESS) {
         return error;
     }
-    LOG(B, "steady: host wake %s after %lu WAKE_IND", B->IbsTxAwake ? "acknowledged" : "NOT acknowledged",
-        B->Stats.IbsWakeTries);
+    if (!B->IbsTxAwake) {
+        /* Every WAKE_IND was written but none acknowledged: the controller is not serving HCI. */
+        LOG(B, "steady: host wake NOT acknowledged after %lu WAKE_IND", B->Stats.IbsWakeTries);
+        return ERROR_TIMEOUT;
+    }
+    LOG(B, "steady: host wake acknowledged after %lu WAKE_IND", B->Stats.IbsWakeTries);
 
     B->Writer = CreateThread(NULL, 0, WriterThread, B, 0, NULL);
     if (B->Writer == NULL) {

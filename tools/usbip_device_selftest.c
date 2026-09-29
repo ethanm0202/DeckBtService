@@ -153,25 +153,26 @@ Replied(unsigned int Index, unsigned long Seqnum, unsigned char Tag)
     return g_ReplyCount > Index && g_Replies[Index].Seqnum == Seqnum && g_Replies[Index].Tag == Tag;
 }
 
-/* An isochronous OUT transfer of Length bytes on EP 0x03 with Packets (offset, length) descriptors. */
+/* An isochronous transfer of Length bytes on EP 0x03 / 0x83 with Packets (offset, length) descriptors. */
 static void
-IsoOut(USBIP_DEVICE *Device, unsigned long Seqnum, unsigned long Length, const unsigned long *Descs,
-       unsigned long Packets, unsigned long long Now)
+IsoSubmit(USBIP_DEVICE *Device, unsigned long Seqnum, int In, unsigned long Length, const unsigned long *Descs,
+          unsigned long Packets, unsigned long long Now)
 {
     unsigned char h[USBIP_URB_HEADER_SIZE] = { 0 };
     unsigned char payload[64 + 4 * USBIP_ISO_DESC_SIZE] = { 0 };
+    unsigned long data = In ? 0u : Length;   /* IN carries only the descriptors */
 
     UsbipPut32(h + USBIP_HDR_COMMAND, USBIP_CMD_SUBMIT);
     UsbipPut32(h + USBIP_HDR_SEQNUM, Seqnum);
-    UsbipPut32(h + USBIP_HDR_DIRECTION, USBIP_DIR_OUT);
+    UsbipPut32(h + USBIP_HDR_DIRECTION, In ? USBIP_DIR_IN : USBIP_DIR_OUT);
     UsbipPut32(h + USBIP_HDR_EP, 3);
     UsbipPut32(h + USBIP_HDR_LENGTH, Length);
     UsbipPut32(h + USBIP_HDR_PACKETS, Packets);
     for (unsigned long i = 0; i < Packets; i++) {
-        UsbipPut32(payload + Length + i * USBIP_ISO_DESC_SIZE + 0, Descs[2 * i]);
-        UsbipPut32(payload + Length + i * USBIP_ISO_DESC_SIZE + 4, Descs[2 * i + 1]);
+        UsbipPut32(payload + data + i * USBIP_ISO_DESC_SIZE + 0, Descs[2 * i]);
+        UsbipPut32(payload + data + i * USBIP_ISO_DESC_SIZE + 4, Descs[2 * i + 1]);
     }
-    (void)UsbipDeviceHandle(Device, h, payload, Length + Packets * USBIP_ISO_DESC_SIZE, Now);
+    (void)UsbipDeviceHandle(Device, h, payload, data + Packets * USBIP_ISO_DESC_SIZE, Now);
 }
 
 #define EP_EVENT 1u
@@ -312,18 +313,42 @@ main(void)
         (void)UsbipDeviceHandle(&device, h, NULL, 0, now);
         CHECK(g_ReplyCount == 1 && g_Replies[0].Status == 0 && device.ScoAlt == 2, "alternate setting 2 selected");
 
-        IsoOut(&device, 121, 17, same, 2, now);
+        IsoSubmit(&device, 121, 0, 17, same, 2, now);
         CHECK(g_ReplyCount == 2 && g_Replies[1].Seqnum == 121 && g_Replies[1].Status == USBIP_EINVAL &&
               g_Replies[1].Actual == 0, "overlapping descriptors: -EINVAL, nothing transferred");
-        IsoOut(&device, 122, 17, reversed, 2, now);
+        IsoSubmit(&device, 122, 0, 17, reversed, 2, now);
         CHECK(g_ReplyCount == 3 && g_Replies[2].Seqnum == 122 && g_Replies[2].Status == USBIP_EINVAL,
               "descriptors out of order: -EINVAL");
-        IsoOut(&device, 123, 17, apart, 2, now);
+        IsoSubmit(&device, 123, 0, 17, apart, 2, now);
         CHECK(g_ReplyCount == 3, "adjacent in-order descriptors are accepted and paced");
         (void)UsbipDeviceTick(&device, now + MS(1000));
         CHECK(g_ReplyCount == 4 && g_Replies[3].Seqnum == 123 && g_Replies[3].Status == 0 &&
               g_Replies[3].Actual == 17, "and complete with exactly the 17 bytes requested");
         CHECK(device.Stats.ScoRejectedUrbs == 2, "two transfers rejected");
+    }
+
+    printf("-- No isochronous packet may exceed the setting's wMaxPacketSize --\n");
+    {
+        static const unsigned long exact[2] = { 0, 17 };
+        static const unsigned long over[2]  = { 0, 18 };   /* inside the transfer, one byte over alt 2 */
+        unsigned long long t = now + MS(1100);
+
+        g_ReplyCount = 0;
+        IsoSubmit(&device, 130, 0, 18, over, 1, t);
+        CHECK(g_ReplyCount == 1 && g_Replies[0].Seqnum == 130 && g_Replies[0].Status == USBIP_EINVAL,
+              "OUT packet of 18 bytes at alternate setting 2 (17): -EINVAL");
+        IsoSubmit(&device, 131, 1, 18, over, 1, t);
+        CHECK(g_ReplyCount == 2 && g_Replies[1].Seqnum == 131 && g_Replies[1].Status == USBIP_EINVAL,
+              "IN packet of 18 bytes: -EINVAL");
+        IsoSubmit(&device, 132, 0, 17, exact, 1, t);
+        IsoSubmit(&device, 133, 1, 17, exact, 1, t);
+        CHECK(g_ReplyCount == 2, "packets of exactly 17 bytes are accepted and paced");
+        (void)UsbipDeviceTick(&device, t + MS(1000));
+        CHECK(g_ReplyCount == 4 && g_Replies[2].Status == 0 && g_Replies[3].Status == 0 &&
+              ((g_Replies[2].Seqnum == 132 && g_Replies[3].Seqnum == 133) ||
+               (g_Replies[2].Seqnum == 133 && g_Replies[3].Seqnum == 132)),
+              "and both complete");
+        CHECK(device.Stats.ScoRejectedUrbs == 4, "four transfers rejected in all");
     }
 
     if (g_Failures != 0) {

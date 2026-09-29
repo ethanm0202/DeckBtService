@@ -7,7 +7,8 @@
  * thread does, with pacing ticks in between; the backend is the synthetic HCI stub.
  *
  * Every message the device sends back is checked: a RET_SUBMIT or RET_UNLINK header, a payload
- * no longer than what the client asked for, and isochronous descriptors that fit the transfer.
+ * no longer than what the client asked for, and isochronous descriptors that fit the transfer,
+ * none of an accepted transfer longer than the SCO setting's wMaxPacketSize at submit time.
  *
  *   tools\fuzz.cmd [seconds]
  */
@@ -19,18 +20,20 @@
 #include "../src/service/usbip_device.h"
 #include "../src/service/usbip_proto.h"
 #include "../src/include/hci_stub.h"
+#include "../src/include/usb_descriptors.h"
 
 static USBIP_DEVICE *g_Device;
 static HCI_TRANSPORT g_Transport;
 static HCI_STUB g_Stub;
 
 /*
- * The request each outstanding seqnum made: direction, requested length, packet count. A seqnum
- * reused while its first transfer is still outstanding (usbip-win2 never does this) makes the
- * replies ambiguous; such a seqnum is only checked for framing.
+ * The request each outstanding seqnum made: direction, requested length, packet count, and the
+ * SCO wMaxPacketSize in force when it was submitted. A seqnum reused while its first transfer is
+ * still outstanding (usbip-win2 never does this) makes the replies ambiguous; such a seqnum is
+ * only checked for framing.
  */
 #define TRACK 4096u
-static struct { unsigned long Seqnum, Length, Packets; unsigned char In, Live, Ambiguous; } g_Track[TRACK];
+static struct { unsigned long Seqnum, Length, Packets, MaxPacket; unsigned char In, Live, Ambiguous; } g_Track[TRACK];
 
 static void
 Fail(void)
@@ -49,6 +52,7 @@ Remember(const unsigned char *Header)
     g_Track[slot].Length = UsbipGet32(Header + USBIP_HDR_LENGTH);
     g_Track[slot].Packets = UsbipGet32(Header + USBIP_HDR_PACKETS);
     g_Track[slot].In = (unsigned char)(UsbipGet32(Header + USBIP_HDR_DIRECTION) == USBIP_DIR_IN);
+    g_Track[slot].MaxPacket = DeckBtScoAltPacketSize[g_Device->ScoAlt];
     g_Track[slot].Live = 1;
 }
 
@@ -94,6 +98,16 @@ CheckReply(void *Context, const unsigned char *Data, unsigned long Length)
             if (packets != USBIP_NON_ISO_PACKETS && packets != g_Track[slot].Packets &&
                 (long)UsbipGet32(Data + USBIP_HDR_STATUS) == 0) {
                 Fail();
+            }
+            /* An accepted isochronous transfer: every packet fits one frame of its setting. */
+            if (packets != USBIP_NON_ISO_PACKETS && (long)UsbipGet32(Data + USBIP_HDR_STATUS) == 0) {
+                const unsigned char *d = Data + Length - isoBytes;
+
+                for (unsigned long i = 0; i < packets; i++, d += USBIP_ISO_DESC_SIZE) {
+                    if (UsbipGet32(d + 4) > g_Track[slot].MaxPacket || UsbipGet32(d + 8) > UsbipGet32(d + 4)) {
+                        Fail();
+                    }
+                }
             }
             g_Track[slot].Live = 0;
         }

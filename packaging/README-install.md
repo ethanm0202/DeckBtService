@@ -29,7 +29,7 @@ The programs are not code-signed. When you open `install.cmd` or the other launc
 - Installs [usbip-win2](https://github.com/vadimgrn/usbip-win2) 0.9.8.1 if it is missing or older. Its installer is downloaded from the official GitHub release and checked against a pinned SHA-256 before it runs. usbip-win2 is not included in this download. It provides the Microsoft-signed virtual USB driver that DeckBtService attaches its Bluetooth adapter through.
 - Switches off the stock Bluetooth driver (`qcbtuart.sys` on `ACPI\QCOM2066`) with a Windows device-installation deny policy. Windows allows only one Bluetooth radio at a time, and the stock driver would otherwise hold the radio's serial line.
 - Makes the radio's serial line available to the service (`SerCxFriendlyName` = `QCA2066` on `ACPI\AMDI0020\4`).
-- Copies the programs to `C:\Program Files\DeckBtService` and registers the `DeckBtService` service, which starts automatically with Windows.
+- Copies the programs to `C:\Program Files\DeckBtService` and registers the `DeckBtService` service, which starts automatically with Windows. If another program already has a service named `DeckBtService`, the installer stops before changing anything and leaves that service alone; the uninstaller never removes it either.
 
 Everything it changes is recorded in `C:\ProgramData\DeckBtService\install-state.json`, so the uninstaller reverses only those changes. The install log is `C:\ProgramData\DeckBtService\install.log`; the service's own log is `deckbt-service.log` in the same folder.
 
