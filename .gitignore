@@ -1,0 +1,21 @@
+# Build outputs (tools\build.cmd, tools\selftest.cmd).
+tools/_build/
+tools/__pycache__/
+dist/
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.log
+*.wav
+
+# Qualcomm controller firmware is read from the installed vendor package; never committed.
+*.tlv
+hpnv*
+
+# EWDK images.
+*.iso
+
+# Local notes.
+*.local.md

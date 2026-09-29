@@ -1,0 +1,271 @@
+=================================================================
+ DeckBtService - Virtual HCI Reference
+ Generated from the production sources: src/common/usb_descriptors.c
+ and src/common/hci_stub.c. Do not hand-edit.
+=================================================================
+
+--- IDENTITY ---
+  idVendor            0x0CF3
+  idProduct           0x6390
+  class/subclass/prot E0/01/01 (wireless / RF / Bluetooth)
+  speed               high (required; see src/include/usb_descriptors.h)
+  endpoints           EP 0x81 int IN (events), 0x02 bulk OUT / 0x82 bulk IN (ACL),
+                      0x03 isoch OUT / 0x83 isoch IN (SCO)
+
+--- USB DESCRIPTORS ---
+
+Device descriptor (18 bytes)
+  0000: 12 01 00 02 E0 01 01 40 F3 0C 90 63 01 00 01 02 
+  0010: 03 01 
+
+Configuration descriptor set (200 bytes)
+  0000: 09 02 C8 00 02 01 00 80 32 09 04 00 00 03 E0 01 
+  0010: 01 00 07 05 81 03 10 00 04 07 05 02 02 00 02 00 
+  0020: 07 05 82 02 00 02 00 09 04 01 00 02 E0 01 01 00 
+  0030: 07 05 03 01 00 00 04 07 05 83 01 00 00 04 09 04 
+  0040: 01 01 02 E0 01 01 00 07 05 03 01 09 00 04 07 05 
+  0050: 83 01 09 00 04 09 04 01 02 02 E0 01 01 00 07 05 
+  0060: 03 01 11 00 04 07 05 83 01 11 00 04 09 04 01 03 
+  0070: 02 E0 01 01 00 07 05 03 01 19 00 04 07 05 83 01 
+  0080: 19 00 04 09 04 01 04 02 E0 01 01 00 07 05 03 01 
+  0090: 21 00 04 07 05 83 01 21 00 04 09 04 01 05 02 E0 
+  00A0: 01 01 00 07 05 03 01 31 00 04 07 05 83 01 31 00 
+  00B0: 04 09 04 01 06 02 E0 01 01 00 07 05 03 01 3F 00 
+  00C0: 04 07 05 83 01 3F 00 04 
+
+Configuration descriptor set, parsed
+  offset  len  type              detail
+      0     9  CONFIGURATION     wTotalLength=200 bNumInterfaces=2 bConfigurationValue=1 bmAttributes=0x80 bMaxPower=50 (100 mA)
+      9     9  INTERFACE         bInterfaceNumber=0 bAlternateSetting=0 bNumEndpoints=3 class=E0/01/01
+     18     7  ENDPOINT          bEndpointAddress=0x81 interrupt   wMaxPacketSize=16 bInterval=4
+     25     7  ENDPOINT          bEndpointAddress=0x02 bulk        wMaxPacketSize=512 bInterval=0
+     32     7  ENDPOINT          bEndpointAddress=0x82 bulk        wMaxPacketSize=512 bInterval=0
+     39     9  INTERFACE         bInterfaceNumber=1 bAlternateSetting=0 bNumEndpoints=2 class=E0/01/01
+     48     7  ENDPOINT          bEndpointAddress=0x03 isochronous wMaxPacketSize=0 bInterval=4
+     55     7  ENDPOINT          bEndpointAddress=0x83 isochronous wMaxPacketSize=0 bInterval=4
+     62     9  INTERFACE         bInterfaceNumber=1 bAlternateSetting=1 bNumEndpoints=2 class=E0/01/01
+     71     7  ENDPOINT          bEndpointAddress=0x03 isochronous wMaxPacketSize=9 bInterval=4
+     78     7  ENDPOINT          bEndpointAddress=0x83 isochronous wMaxPacketSize=9 bInterval=4
+     85     9  INTERFACE         bInterfaceNumber=1 bAlternateSetting=2 bNumEndpoints=2 class=E0/01/01
+     94     7  ENDPOINT          bEndpointAddress=0x03 isochronous wMaxPacketSize=17 bInterval=4
+    101     7  ENDPOINT          bEndpointAddress=0x83 isochronous wMaxPacketSize=17 bInterval=4
+    108     9  INTERFACE         bInterfaceNumber=1 bAlternateSetting=3 bNumEndpoints=2 class=E0/01/01
+    117     7  ENDPOINT          bEndpointAddress=0x03 isochronous wMaxPacketSize=25 bInterval=4
+    124     7  ENDPOINT          bEndpointAddress=0x83 isochronous wMaxPacketSize=25 bInterval=4
+    131     9  INTERFACE         bInterfaceNumber=1 bAlternateSetting=4 bNumEndpoints=2 class=E0/01/01
+    140     7  ENDPOINT          bEndpointAddress=0x03 isochronous wMaxPacketSize=33 bInterval=4
+    147     7  ENDPOINT          bEndpointAddress=0x83 isochronous wMaxPacketSize=33 bInterval=4
+    154     9  INTERFACE         bInterfaceNumber=1 bAlternateSetting=5 bNumEndpoints=2 class=E0/01/01
+    163     7  ENDPOINT          bEndpointAddress=0x03 isochronous wMaxPacketSize=49 bInterval=4
+    170     7  ENDPOINT          bEndpointAddress=0x83 isochronous wMaxPacketSize=49 bInterval=4
+    177     9  INTERFACE         bInterfaceNumber=1 bAlternateSetting=6 bNumEndpoints=2 class=E0/01/01
+    186     7  ENDPOINT          bEndpointAddress=0x03 isochronous wMaxPacketSize=63 bInterval=4
+    193     7  ENDPOINT          bEndpointAddress=0x83 isochronous wMaxPacketSize=63 bInterval=4
+
+SCO alternate-setting table (Bluetooth SIG USB transport layout)
+  alt 0:   0 bytes/frame, descriptor offset 39  (zero isochronous bandwidth)
+  alt 1:   9 bytes/frame, descriptor offset 62
+  alt 2:  17 bytes/frame, descriptor offset 85
+  alt 3:  25 bytes/frame, descriptor offset 108
+  alt 4:  33 bytes/frame, descriptor offset 131
+  alt 5:  49 bytes/frame, descriptor offset 154
+  alt 6:  63 bytes/frame, descriptor offset 177
+
+String descriptor index 0 (4 bytes)
+  0000: 04 03 09 04 
+
+String descriptor index 1 (28 bytes)
+  0000: 1C 03 44 00 65 00 63 00 6B 00 42 00 74 00 53 00 
+  0010: 65 00 72 00 76 00 69 00 63 00 65 00 
+
+String descriptor index 2 (32 bytes)
+  0000: 20 03 42 00 6C 00 75 00 65 00 74 00 6F 00 6F 00 
+  0010: 74 00 68 00 20 00 52 00 61 00 64 00 69 00 6F 00 
+
+String descriptor index 3 (22 bytes)
+  0000: 16 03 44 00 45 00 43 00 4B 00 42 00 54 00 30 00 
+  0010: 30 00 30 00 31 00 
+
+--- HCI COMMAND / EVENT PAIRS ---
+Command packets are what BTHUSB writes to EP0 (opcode LE16, plen, params).
+Event packets are what the stub returns on EP 0x81 (evt code, plen, payload).
+
+HCI_Reset                                      opcode 0x0C03
+  CMD  03 0C 00 
+  EVT  0E 04 01 03 0C 00 
+       (6 bytes)
+
+Set_Event_Mask                                 opcode 0x0C01
+  CMD  01 0C 00 
+  EVT  0E 04 01 01 0C 00 
+       (6 bytes)
+
+Set_Event_Mask_Page_2                          opcode 0x0C63
+  CMD  63 0C 00 
+  EVT  0E 04 01 63 0C 00 
+       (6 bytes)
+
+Write_LE_Host_Support                          opcode 0x0C6D
+  CMD  6D 0C 00 
+  EVT  0E 04 01 6D 0C 00 
+       (6 bytes)
+
+Read_Local_Version_Information                 opcode 0x1001
+  CMD  01 10 00 
+  EVT  0E 0C 01 01 10 00 0B 00 00 0B 1D 00 00 00 
+       (14 bytes)
+
+Read_Local_Supported_Commands                  opcode 0x1002
+  CMD  02 10 00 
+  EVT  0E 44 01 02 10 00 FF FF FF 03 CE FF EF FF FF FF 
+       FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF 
+       FF FF FF FF FF FF 00 00 00 00 00 00 00 00 00 00 
+       00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 
+       00 00 00 00 00 00 
+       (70 bytes)
+
+Read_Local_Supported_Features                  opcode 0x1003
+  CMD  03 10 00 
+  EVT  0E 0C 01 03 10 00 BF FE CF FE DB FF 7B 87 
+       (14 bytes)
+
+Read_Local_Extended_Features(page 0)           opcode 0x1004
+  CMD  04 10 00 
+  EVT  0E 0E 01 04 10 00 00 02 BF FE CF FE DB FF 7B 87 
+       (16 bytes)
+
+Read_Buffer_Size                               opcode 0x1005
+  CMD  05 10 00 
+  EVT  0E 0B 01 05 10 00 FD 03 FF 08 00 08 00 
+       (13 bytes)
+
+Read_BD_ADDR                                   opcode 0x1009
+  CMD  09 10 00 
+  EVT  0E 0A 01 09 10 00 01 00 00 CB DE 02 
+       (12 bytes)
+
+Read_Local_Name                                opcode 0x0C14
+  CMD  14 0C 00 
+  EVT  0E FC 01 14 0C 00 44 65 63 6B 42 74 55 73 62 00 
+       00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 
+       00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 
+       00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 
+       00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 
+       00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 
+       00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 
+       00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 
+       00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 
+       00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 
+       00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 
+       00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 
+       00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 
+       00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 
+       00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 
+       00 00 00 00 00 00 00 00 00 00 00 00 00 00 
+       (254 bytes)
+
+Read_Page_Timeout                              opcode 0x0C17
+  CMD  17 0C 00 
+  EVT  0E 06 01 17 0C 00 00 20 
+       (8 bytes)
+
+Read_Scan_Enable                               opcode 0x0C19
+  CMD  19 0C 00 
+  EVT  0E 05 01 19 0C 00 00 
+       (7 bytes)
+
+Read_Class_Of_Device                           opcode 0x0C23
+  CMD  23 0C 00 
+  EVT  0E 07 01 23 0C 00 04 01 1C 
+       (9 bytes)
+
+Read_Voice_Setting                             opcode 0x0C25
+  CMD  25 0C 00 
+  EVT  0E 06 01 25 0C 00 60 00 
+       (8 bytes)
+
+Read_Inquiry_Response_Transmit_Power_Level     opcode 0x0C58
+  CMD  58 0C 00 
+  EVT  0E 05 01 58 0C 00 00 
+       (7 bytes)
+
+Read_Local_Supported_Codecs                    opcode 0x100B
+  CMD  0B 10 00 
+  EVT  0E 08 01 0B 10 00 02 02 05 00 
+       (10 bytes)
+
+Read_Stored_Link_Key                           opcode 0x0C0D
+  CMD  0D 0C 00 
+  EVT  0E 08 01 0D 0C 00 08 00 00 00 
+       (10 bytes)
+
+Write_Stored_Link_Key                          opcode 0x0C11
+  CMD  11 0C 00 
+  EVT  0E 05 01 11 0C 00 01 
+       (7 bytes)
+
+Delete_Stored_Link_Key                         opcode 0x0C12
+  CMD  12 0C 00 
+  EVT  0E 06 01 12 0C 00 00 00 
+       (8 bytes)
+
+LE_Read_Buffer_Size                            opcode 0x2002
+  CMD  02 20 00 
+  EVT  0E 07 01 02 20 00 FB 00 04 
+       (9 bytes)
+
+LE_Read_Local_Supported_Features               opcode 0x2003
+  CMD  03 20 00 
+  EVT  0E 0C 01 03 20 00 7D 11 00 00 00 00 00 00 
+       (14 bytes)
+
+LE_Read_Supported_States                       opcode 0x201C
+  CMD  1C 20 00 
+  EVT  0E 0C 01 1C 20 00 FF FF FF FF FF FF FF FF 
+       (14 bytes)
+
+LE_Read_Advertising_Physical_Channel_Tx_Power  opcode 0x2007
+  CMD  07 20 00 
+  EVT  0E 05 01 07 20 00 09 
+       (7 bytes)
+
+LE_Read_Filter_Accept_List_Size                opcode 0x200F
+  CMD  0F 20 00 
+  EVT  0E 05 01 0F 20 00 20 
+       (7 bytes)
+
+LE_Read_Maximum_Data_Length                    opcode 0x202F
+  CMD  2F 20 00 
+  EVT  0E 0C 01 2F 20 00 FB 00 48 08 FB 00 48 08 
+       (14 bytes)
+
+LE_Read_Suggested_Default_Data_Length          opcode 0x2023
+  CMD  23 20 00 
+  EVT  0E 08 01 23 20 00 FB 00 48 08 
+       (10 bytes)
+
+LE_Read_Resolving_List_Size                    opcode 0x202A
+  CMD  2A 20 00 
+  EVT  0E 05 01 2A 20 00 20 
+       (7 bytes)
+
+Write_Class_Of_Device (status-only)            opcode 0x0C24
+  CMD  24 0C 00 
+  EVT  0E 04 01 24 0C 00 
+       (6 bytes)
+
+Write_Extended_Inquiry_Response (status-only)  opcode 0x0C52
+  CMD  52 0C 00 
+  EVT  0E 04 01 52 0C 00 
+       (6 bytes)
+
+unknown opcode (default path)                  opcode 0x0FFF
+  CMD  FF 0F 00 
+  EVT  0E 04 01 FF 0F 00 
+       (6 bytes)
+
+--- FIFO / LIMITS ---
+  event FIFO depth        32 slots
+  max event size          257 bytes
+
+End of Virtual HCI Reference.

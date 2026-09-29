@@ -1,0 +1,9 @@
+# Text files are stored with LF whatever each checkout's core.autocrlf setting.
+* text=auto
+
+# Byte-compared record (tools\check-reference.cmd): stored and checked out byte for byte,
+# whatever the local line-ending settings.
+reference/** -text
+
+# cmd.exe mis-parses labels and goto in LF-only batch files.
+*.cmd text eol=crlf
