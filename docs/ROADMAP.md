@@ -1,6 +1,6 @@
 # Roadmap
 
-What v0.1.0 does, what comes next, and how it differs from the stock Bluetooth driver. Test results are in [VERIFICATION.md](VERIFICATION.md).
+What DeckBtService does as of v0.1.1, what comes next, and how it differs from the stock Bluetooth driver. Test results are in [VERIFICATION.md](VERIFICATION.md).
 
 ## Done in v0.1.0
 
@@ -15,6 +15,11 @@ What v0.1.0 does, what comes next, and how it differs from the stock Bluetooth d
 - [x] Release zip with double-click launchers for install, uninstall and diagnostics: OLED-only hardware check, hash-checked usbip-win2 0.9.8.1, stock transport blocked by a deny policy, UART publication, a change record, and an uninstall that restores stock Bluetooth. A first install on a clean system needs one restart; uninstall, reinstall from stock and upgrade need none ([VERIFICATION.md](VERIFICATION.md#install)).
 - [x] Tests: 12 host-side suites and the reference check, socket regressions against the console server, and two libFuzzer/AddressSanitizer targets.
 
+## Done in v0.1.1
+
+- [x] Fixes from a static review ([CHANGELOG.md](../CHANGELOG.md)): a controller that never acknowledges the host in-band-sleep wake now fails the start instead of being reported ready; the voice pacing timer is required at start and a failed timer arm no longer spins; isochronous packets longer than the alternate setting's `wMaxPacketSize` are rejected; a refused import's bus ID is escaped in the log; the installer refuses, and the uninstaller leaves alone, a `DeckBtService` service that runs another program.
+- [x] Tests: a 13th suite runs the real controller backend against a simulated controller; new regressions for each fix.
+
 ## Next
 
 - [ ] **Longer runs**: overnight sleep, calls that span a sleep, long calls, and long-run input quality. Connected devices are not proof of audio or input quality.
@@ -24,6 +29,8 @@ What v0.1.0 does, what comes next, and how it differs from the stock Bluetooth d
 - [ ] **Stock parity beyond the microphone**: a controlled reconnect and new-pairing matrix, game controllers and other HID input, A2DP/AVRCP, several devices at once, GATT/RFCOMM/PAN, range and Wi-Fi coexistence, and latency and battery measurements against the stock driver. See [Differences from stock Bluetooth](#differences-from-stock-bluetooth).
 - [ ] **Transport correctness under cancellation**: the bounded-replay limitations stay open. The unlink storms seen with usbip-win2 0.9.8.0 were its issue #190 resets; on 0.9.8.1 no unlinks were counted in the reconnect tests, which shows the trigger is gone, not that the remaining races are handled.
 - [ ] **Real controller faults**: the UART fault path is covered by isolated tests only. A real fault, such as the UART controller being reset by a driver update, has not been observed.
+- [ ] **Host in-band sleep**: the host never sends `SLEEP_IND`, so the controller sees it awake for the whole session ([QCA2066.md](QCA2066.md#in-band-sleep)). Measure the battery cost against the stock driver before changing it.
+- [ ] **Release engineering**: continuous integration for the host suites, socket regressions and a fuzz smoke run; code-signed binaries or signed releases. `SHA256SUMS` ships inside the same zip, so it detects damage, not tampering.
 
 ## Open questions
 

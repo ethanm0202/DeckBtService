@@ -10,7 +10,7 @@ It is for the Steam Deck **OLED** only. The Steam Deck LCD has a different Bluet
 
 ## Install
 
-1. Download `DeckBtService-0.1.0.zip` from the [Releases](../../releases) page and extract it.
+1. Download `DeckBtService-0.1.1.zip` from the [Releases](../../releases) page and extract it.
 2. Double-click `install.cmd` and approve the administrator prompt.
 3. If it asks you to restart Windows, restart, then double-click `install.cmd` again. A first install needs one restart.
 
@@ -20,7 +20,7 @@ It is for the Steam Deck **OLED** only. The Steam Deck LCD has a different Bluet
 
 ## Status
 
-Version 0.1.0. Tested on one Steam Deck OLED running Windows 11 25H2, with a Shokz OpenMeet headset and a Bluetooth mouse. Details and measurements: [docs/VERIFICATION.md](docs/VERIFICATION.md).
+Version 0.1.1 ([changes](CHANGELOG.md)). Tested on one Steam Deck OLED running Windows 11 25H2, with a Shokz OpenMeet headset and a Bluetooth mouse. Details and measurements: [docs/VERIFICATION.md](docs/VERIFICATION.md).
 
 What works:
 
@@ -123,6 +123,7 @@ Building is only needed to change the code; releases include ready-to-run progra
 - [docs/QCA2066.md](docs/QCA2066.md): controller bring-up, firmware selection, in-band sleep
 - [docs/VERIFICATION.md](docs/VERIFICATION.md): what was tested and the results
 - [docs/ROADMAP.md](docs/ROADMAP.md): what is done, what is next, and differences from stock Bluetooth
+- [CHANGELOG.md](CHANGELOG.md): changes in each release
 
 ---
 

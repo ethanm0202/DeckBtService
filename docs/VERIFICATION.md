@@ -1,6 +1,6 @@
 # Verification
 
-What was tested for DeckBtService as of v0.1.0, and the results. Everything below was measured on one Steam Deck OLED. The install, upgrade and uninstall results come from the v0.1.0 release package; the other device results come from the builds leading up to it. Results measured with usbip-win2 0.9.8.0, before the move to 0.9.8.1, are marked as such.
+What was tested for DeckBtService as of v0.1.1, and the results. Everything below was measured on one Steam Deck OLED. The install, upgrade and uninstall results come from the v0.1.0 release package; the other device results come from the builds leading up to it. What changed for v0.1.1 and how it was checked is under [v0.1.1](#v011). Results measured with usbip-win2 0.9.8.0, before the move to 0.9.8.1, are marked as such.
 
 ## Test environment
 
@@ -61,7 +61,23 @@ The service and the UART probe build with MSVC `/W4 /WX`.
 
 ### Fuzzing
 
-`tools\fuzz.cmd` builds two libFuzzer targets with AddressSanitizer: the USB/IP device model (`fuzz_usbip_device.c`) and the controller side (`fuzz_controller.c`). Each run lasts 60 s per target. The last run before release executed 1,040,357 USB/IP and 154,179 controller inputs with no findings; earlier runs of 1.16–1.2 million and 0.23–0.34 million inputs were also clean after the fixes listed under [Other defects fixed](#other-defects-fixed).
+`tools\fuzz.cmd` builds two libFuzzer targets with AddressSanitizer: the USB/IP device model (`fuzz_usbip_device.c`) and the controller side (`fuzz_controller.c`). Each run lasts 60 s per target. The last run before v0.1.1 executed 930,374 USB/IP and 126,087 controller inputs with no findings. Before v0.1.0: 1,040,357 and 154,179; earlier runs of 1.16–1.2 million and 0.23–0.34 million inputs were also clean after the fixes listed under [Other defects fixed](#other-defects-fixed).
+
+## v0.1.1
+
+v0.1.1 fixes the findings of a static review of v0.1.0 ([CHANGELOG.md](../CHANGELOG.md)). Each fix has a regression that fails on v0.1.0:
+
+| Fix | Regression | On v0.1.0 | On v0.1.1 |
+|---|---|---|---|
+| Unacknowledged host wake fails the start | `qca_backend_selftest`, controller that never answers `WAKE_IND` | start returned success, bridge ready, no hand-back | `ERROR_TIMEOUT` after 10 tries, no writer, bridge not ready, controller back in ROM at 115200, next start succeeds |
+| Oversize isochronous packets rejected | `usbip_device_selftest`, 18-byte packets at alternate setting 2 (17) | both directions accepted (5 checks failed) | `-EINVAL`; 17-byte packets accepted and completed |
+| | `fuzz_usbip_device` packet-size invariant | abort within 2 s against v0.1.0's `usbip_device.c` | 930,374 inputs, no findings |
+| Bus ID escaped in the log | `usbip_selftest.py`, bus ID `1-1\r\n  999.000 forged\'` | the log gained a line `  999.000 forged\'' refused (status 1)` | one line, `import of '1-1\x0D\x0A  999.000 forged\x5C\x27' refused` |
+| Foreign `DeckBtService` left alone | throwaway harness: `install.ps1` and `uninstall.ps1` functions against a dummy service | (the takeover deleted it) | refused before any change; uninstall leaves it registered; our own path, in any letter case, still accepted |
+
+The pacing-timer changes (created before the server starts; a failed arm waits instead of spinning) have no failure injection: `CreateWaitableTimerExW` and `SetWaitableTimer` did not fail in any run.
+
+On the device, the v0.1.1 code (commit `468d2bb`, differing from the release only in version files and documentation) was installed over v0.1.0 with its release-style package: `install.ps1` exit 0 in 11.6 s with no restart; `steady: host wake acknowledged after 1 WAKE_IND`, bridge ready 3,406 ms after start, `attach: usbip-win2 port 1`; the Generic Bluetooth Adapter and the paired devices came back. No headset was connected during this run, so voice was not exercised on v0.1.1. The isochronous check is consistent with the traffic recorded earlier from `BTHUSB`: a v0.1.0 voice session at alternate setting 6 (63 bytes) carried 1,504 OUT transfers with 94,752 bytes, exactly 63 bytes per transfer, the one-packet transfers `BTHUSB` sends for wideband voice; the check accepts those.
 
 ## Results on the device
 

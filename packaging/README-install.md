@@ -10,8 +10,8 @@ DeckBtService makes Bluetooth headset microphones work under Windows on the **St
 
 ## Install
 
-1. Download `DeckBtService-0.1.0.zip` from the project's [Releases page](https://github.com/ethanm0202/DeckBtService/releases).
-2. Right-click the zip, choose **Extract All**, and extract it to your Downloads folder. This creates a folder `DeckBtService-0.1.0`. Keep it somewhere only you can write to, such as Downloads or Documents, not a shared folder.
+1. Download `DeckBtService-0.1.1.zip` from the project's [Releases page](https://github.com/ethanm0202/DeckBtService/releases).
+2. Right-click the zip, choose **Extract All**, and extract it to your Downloads folder. This creates a folder `DeckBtService-0.1.1`. Keep it somewhere only you can write to, such as Downloads or Documents, not a shared folder.
 3. Open the folder and double-click **`install.cmd`**. Approve the administrator prompt.
 4. Wait for the window to report the result. It stays open until you close it.
 5. If it says **Restart Windows**, restart, then double-click `install.cmd` again. A first install needs one restart, because usbip-win2's own installer asks for one. The second run confirms that Bluetooth is up.

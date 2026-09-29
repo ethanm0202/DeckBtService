@@ -39,7 +39,7 @@ tools\_build\test\deckbt-usbip.exe --version
 tools\package.cmd
 ```
 
-Builds in `tools\_build\package-release`, never the default output, and refuses to run unless the release inputs in `packaging/` are present. A clean build produces `dist\DeckBtService-<VERSION>.zip` with one top folder, `DeckBtService-<VERSION>\`; for v0.1.0 that is `DeckBtService-0.1.0.zip` and `DeckBtService-0.1.0\`. A dirty test build keeps the full build identity in both names. The folder contains:
+Builds in `tools\_build\package-release`, never the default output, and refuses to run unless the release inputs in `packaging/` are present. A clean build produces `dist\DeckBtService-<VERSION>.zip` with one top folder, `DeckBtService-<VERSION>\`; for v0.1.1 that is `DeckBtService-0.1.1.zip` and `DeckBtService-0.1.1\`. A dirty test build keeps the full build identity in both names. The folder contains:
 
 | File | Purpose |
 |---|---|
