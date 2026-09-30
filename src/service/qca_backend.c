@@ -552,6 +552,14 @@ WriterThread(LPVOID Parameter)
                 B->TxCount--;
             }
             LeaveCriticalSection(&B->TxLock);
+            /* Waking the stranded SCO queue: a TX slot was just freed. Drain pending bridge SCO
+             * while holding neither TxLock nor blocking on the controller lock. */
+            if (B->Lock != NULL && TryEnterCriticalSection(B->Lock)) {
+                if (B->Bridge.OutboundScoCount != 0) {
+                    HciBridgeDrainOutboundSco(&B->Bridge);
+                }
+                LeaveCriticalSection(B->Lock);
+            }
             if (length == 0 || B->Stop || B->WriterStop || B->Faulted) {
                 break;
             }
@@ -926,8 +934,22 @@ TPeekOrder(const HCI_TRANSPORT *Transport, HCI_STREAM Stream, unsigned long *Ord
     return HciTransportPeekOrder(&((const QCA_BACKEND *)Transport->Context)->BridgeTransport, Stream, Order);
 }
 
+static void
+TFlushSco(HCI_TRANSPORT *Transport)
+{
+    HciTransportFlushSco(&((QCA_BACKEND *)Transport->Context)->BridgeTransport);
+}
+
 static const HCI_TRANSPORT_OPS g_TransportOps = {
-    TSubmitCommand, TSubmitAcl, TSubmitSco, THasStream, TPopStream, TLastEventLength, TReset, TPeekOrder
+    TSubmitCommand,
+    TSubmitAcl,
+    TSubmitSco,
+    THasStream,
+    TPopStream,
+    TLastEventLength,
+    TReset,
+    TPeekOrder,
+    TFlushSco
 };
 
 /* ------------------------------------------------------------------ lifecycle */

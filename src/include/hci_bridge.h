@@ -177,6 +177,9 @@
 /* Open ACL links (BR/EDR and LE) tracked for a clean shutdown; more than the controller supports */
 #define HCI_BRIDGE_MAX_LINKS              16u
 
+/* Maximum concurrent host-submitted vendor commands (OGF 0x3F) tracked for completion matching */
+#define HCI_BRIDGE_MAX_HOST_VENDOR_CMDS   8u
+
 /* Slots for internal FIFO queues */
 typedef struct _HCI_BRIDGE_EVENT_SLOT {
     unsigned char Data[HCI_BRIDGE_MAX_EVENT_SIZE];
@@ -340,6 +343,8 @@ typedef struct _HCI_BRIDGE {
     /* Command flow control seen on the wire (CLEAN SHUTDOWN) */
     unsigned char         CommandCredits;      /* last Num_HCI_Command_Packets, less commands sent since */
     unsigned char         HostCommandsPending; /* host commands sent, not yet answered by Command_Status/Complete */
+    unsigned short        HostVendorOpcodes[HCI_BRIDGE_MAX_HOST_VENDOR_CMDS]; /* exact opcodes of in-flight host vendor commands */
+    unsigned char         HostVendorOpcodeCount;
 
     /* Diagnostic counters */
     HCI_BRIDGE_COUNTERS   Counters;
@@ -406,6 +411,10 @@ unsigned char HciBridgeOnInbound(
 
 /* Attempts to drain any queued outbound SCO packets to the wire */
 void HciBridgeDrainOutboundSco(
+    _Inout_ HCI_BRIDGE *Bridge);
+
+/* Drops all queued inbound and outbound SCO packets (e.g. at call end) */
+void HciBridgeFlushSco(
     _Inout_ HCI_BRIDGE *Bridge);
 
 /*

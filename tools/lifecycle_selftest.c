@@ -2,10 +2,11 @@
  * No service registration, UART access, firmware, or device attachment. */
 #define DECKBT_VERSION "lifecycle-selftest"
 #define QcaBackendStart FixtureBackendStart
-#define main DeckbtProgramMain
+#define wmain DeckbtProgramMain
 #include "../src/service/deckbt_usbip.c"
-#undef main
+#undef wmain
 #undef QcaBackendStart
+#include <shellapi.h>
 
 static volatile LONG s_Attempts;
 static LONG s_NotifyAttempt;
@@ -125,6 +126,122 @@ static void ScenarioBlocked(BOOL InterruptSequence)
     CloseHandle(thread);
 }
 
+static void TestServiceCommandLineQuoting(void)
+{
+    WCHAR *cmdLine = NULL;
+    const wchar_t *testArgv[] = {
+        L"--firmware-dir",
+        L"C:\\Program Files\\QCA\\",
+        L"--usbip",
+        L"C:\\Program Files\\USBip\\usbip.exe",
+        L"--stop-file",
+        L"C:\\Users\\李明\\Bluetooth Firmware\\stop.txt",
+        L"simple",
+        L"with space",
+        L"tab\tinside",
+        L"embedded\"quote",
+        L"trailing\\backslash\\",
+        L""
+    };
+    int parsedArgc = 0;
+    LPWSTR *parsed = NULL;
+
+    printf("\nservice command-line quoting, dynamic sizing, and round-trip through CommandLineToArgvW\n");
+    cmdLine = BuildServiceCommandLine(L"C:\\Program Files\\DeckBtService\\deckbt-usbip.exe",
+                                      (int)ARRAYSIZE(testArgv), (wchar_t **)testArgv);
+    CHECK(cmdLine != NULL, "build service command line with spaces, Unicode and trailing backslashes");
+
+    if (cmdLine != NULL) {
+        /* Assert that trailing backslash before closing quote is escaped as \\" */
+        CHECK(wcsstr(cmdLine, L"\"C:\\Program Files\\QCA\\\\\"") != NULL,
+              "trailing backslash before closing quote is escaped as \\\\\"");
+
+        /* Assert Unicode path was preserved without ANSI code-page mangling */
+        CHECK(wcsstr(cmdLine, L"\"C:\\Users\\李明\\Bluetooth Firmware\\stop.txt\"") != NULL,
+              "Unicode path with CJK characters preserved in command line");
+
+        parsed = CommandLineToArgvW(cmdLine, &parsedArgc);
+        CHECK(parsed != NULL, "CommandLineToArgvW parses constructed command line");
+        if (parsed != NULL) {
+            CHECK(parsedArgc == (int)(ARRAYSIZE(testArgv) + 2), "parsed argument count matches expected");
+            if (parsedArgc == (int)(ARRAYSIZE(testArgv) + 2)) {
+                CHECK(wcscmp(parsed[0], L"C:\\Program Files\\DeckBtService\\deckbt-usbip.exe") == 0,
+                      "exe path round-trips correctly");
+                CHECK(wcscmp(parsed[1], L"--service") == 0,
+                      "--service flag present as second argument");
+                CHECK(wcscmp(parsed[2], L"--firmware-dir") == 0,
+                      "--firmware-dir argument intact");
+                CHECK(wcscmp(parsed[3], L"C:\\Program Files\\QCA\\") == 0,
+                      "quoted path with trailing backslash round-trips exactly without swallowing next argument");
+                CHECK(wcscmp(parsed[4], L"--usbip") == 0,
+                      "--usbip argument intact and not swallowed");
+                CHECK(wcscmp(parsed[5], L"C:\\Program Files\\USBip\\usbip.exe") == 0,
+                      "--usbip path with space round-trips correctly");
+                CHECK(wcscmp(parsed[6], L"--stop-file") == 0,
+                      "--stop-file argument intact");
+                CHECK(wcscmp(parsed[7], L"C:\\Users\\李明\\Bluetooth Firmware\\stop.txt") == 0,
+                      "Unicode path with CJK characters round-trips byte-for-byte");
+                CHECK(wcscmp(parsed[8], L"simple") == 0,
+                      "unquoted argument intact");
+                CHECK(wcscmp(parsed[9], L"with space") == 0,
+                      "space-containing argument intact");
+                CHECK(wcscmp(parsed[10], L"tab\tinside") == 0,
+                      "tab-containing argument intact");
+                CHECK(wcscmp(parsed[11], L"embedded\"quote") == 0,
+                      "embedded quote intact");
+                CHECK(wcscmp(parsed[12], L"trailing\\backslash\\") == 0,
+                      "unquoted trailing backslash intact");
+                CHECK(wcscmp(parsed[13], L"") == 0,
+                      "empty argument intact");
+            }
+            LocalFree(parsed);
+        }
+        free(cmdLine);
+    }
+
+    /* Bug 1 regression: Verify that Exe without spaces does NOT underallocate by 2 characters */
+    {
+        WCHAR *noSpaceExeCmd = BuildServiceCommandLine(L"C:\\DeckBtService\\deckbt-usbip.exe",
+                                                      (int)ARRAYSIZE(testArgv), (wchar_t **)testArgv);
+        CHECK(noSpaceExeCmd != NULL, "build service command line with Exe path containing no spaces (no 2-char underallocation)");
+        if (noSpaceExeCmd != NULL) {
+            const wchar_t *expectedPrefix = L"\"C:\\DeckBtService\\deckbt-usbip.exe\" --service";
+            CHECK(wcsncmp(noSpaceExeCmd, expectedPrefix, wcslen(expectedPrefix)) == 0,
+                  "unconditionally quoted Exe prefix formatted correctly");
+            free(noSpaceExeCmd);
+        }
+    }
+
+    /* Bug 2 regression: Verify that SCM limit supports up to 32,767 characters and rejects beyond */
+    {
+        wchar_t *hugeArgv[350];
+        wchar_t hugePath[120];
+        for (int k = 0; k < 100; k++) {
+            hugePath[k] = L'A';
+        }
+        hugePath[100] = L'\\';
+        hugePath[101] = L'\0';
+        for (int i = 0; i < 350; i++) {
+            hugeArgv[i] = hugePath;
+        }
+        /* 300 args of ~105 chars is ~31,500 chars (valid in SCM limit <= 32,767) */
+        WCHAR *largeCmd = BuildServiceCommandLine(L"C:\\DeckBtService\\deckbt-usbip.exe", 300, hugeArgv);
+        CHECK(largeCmd != NULL, "BuildServiceCommandLine accepts valid large command lines (>8192 chars) up to 32,767 characters");
+        if (largeCmd != NULL) {
+            CHECK(wcslen(largeCmd) > 8192 && wcslen(largeCmd) <= 32767,
+                  "large command line size confirmed between 8192 and 32,767 characters");
+            free(largeCmd);
+        }
+
+        /* 350 args of ~105 chars is ~36,750 chars (exceeds 32,767) */
+        WCHAR *tooBigCmd = BuildServiceCommandLine(L"C:\\DeckBtService\\deckbt-usbip.exe", 350, hugeArgv);
+        CHECK(tooBigCmd == NULL, "BuildServiceCommandLine rejects command lines exceeding 32,767 characters without truncating");
+        if (tooBigCmd != NULL) {
+            free(tooBigCmd);
+        }
+    }
+}
+
 int main(void)
 {
     DWORD result;
@@ -174,6 +291,7 @@ int main(void)
         CHECK(exitCode == ERROR_SUCCESS && s_Attempts == 1, "no retry or failure exit after stop");
         CloseHandle(thread);
     }
+    TestServiceCommandLineQuoting();
     CloseHandle(s_AttemptEvent);
     CloseHandle(g_SuspendPending);
     CloseHandle(g_ResumeEvent);

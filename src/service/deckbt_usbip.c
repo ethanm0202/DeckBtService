@@ -1559,12 +1559,156 @@ ServiceMain(DWORD Argc, LPWSTR *Argv)
 
 /* ------------------------------------------------------------------ install / uninstall */
 
+/* Calculates the length of a quoted argument under Microsoft CRT rules. */
+static size_t
+QuotedArgLength(const WCHAR *Arg)
+{
+    size_t len = 0;
+    BOOLEAN quote = (*Arg == L'\0' || wcspbrk(Arg, L" \t\"") != NULL);
+    unsigned int backslashes = 0;
+
+    if (!quote) {
+        return wcslen(Arg);
+    }
+    len += 2; /* opening and closing quotes */
+    for (const WCHAR *p = Arg; *p != L'\0'; p++) {
+        if (*p == L'\\') {
+            backslashes++;
+        } else if (*p == L'"') {
+            len += 2 * backslashes + 2; /* 2*N backslashes + 1 escape backslash + quote */
+            backslashes = 0;
+        } else {
+            len += backslashes + 1;
+            backslashes = 0;
+        }
+    }
+    len += 2 * backslashes; /* trailing backslashes doubled */
+    return len;
+}
+
+/* Appends one argument to a Windows command line, quoting and escaping per Microsoft CRT rules:
+ * runs of backslashes before a quotation mark are doubled plus one, and trailing backslashes
+ * before the closing quote are doubled so the closing quote is not swallowed as a literal. */
+static BOOLEAN
+AppendQuotedArg(WCHAR *Buffer, size_t Capacity, const WCHAR *Arg)
+{
+    size_t len = wcslen(Buffer);
+    const WCHAR *p;
+    BOOLEAN quote;
+    unsigned int backslashes;
+
+    if (len >= Capacity - 1) {
+        return FALSE;
+    }
+    quote = (*Arg == L'\0' || wcspbrk(Arg, L" \t\"") != NULL);
+    if (len > 0) {
+        if (len >= Capacity - 1) {
+            return FALSE;
+        }
+        Buffer[len++] = L' ';
+        Buffer[len] = L'\0';
+    }
+    if (!quote) {
+        while (*Arg != L'\0') {
+            if (len >= Capacity - 1) {
+                return FALSE;
+            }
+            Buffer[len++] = *Arg++;
+        }
+        Buffer[len] = L'\0';
+        return TRUE;
+    }
+    if (len >= Capacity - 1) {
+        return FALSE;
+    }
+    Buffer[len++] = L'"';
+    backslashes = 0;
+    for (p = Arg; *p != L'\0'; p++) {
+        if (*p == L'\\') {
+            backslashes++;
+        } else if (*p == L'"') {
+            for (unsigned int j = 0; j < 2 * backslashes + 1; j++) {
+                if (len >= Capacity - 1) {
+                    return FALSE;
+                }
+                Buffer[len++] = L'\\';
+            }
+            if (len >= Capacity - 1) {
+                return FALSE;
+            }
+            Buffer[len++] = L'"';
+            backslashes = 0;
+        } else {
+            for (unsigned int j = 0; j < backslashes; j++) {
+                if (len >= Capacity - 1) {
+                    return FALSE;
+                }
+                Buffer[len++] = L'\\';
+            }
+            if (len >= Capacity - 1) {
+                return FALSE;
+            }
+            Buffer[len++] = *p;
+            backslashes = 0;
+        }
+    }
+    for (unsigned int j = 0; j < 2 * backslashes; j++) {
+        if (len >= Capacity - 1) {
+            return FALSE;
+        }
+        Buffer[len++] = L'\\';
+    }
+    if (len >= Capacity - 1) {
+        return FALSE;
+    }
+    Buffer[len++] = L'"';
+    Buffer[len] = L'\0';
+    return TRUE;
+}
+
+/* Builds the service command line dynamically, checking against Windows SCM's 32,767-character limit.
+ * Returns a malloc'd wide string that the caller must free(), or NULL if too long / OOM. */
+static WCHAR *
+BuildServiceCommandLine(const WCHAR *Exe, int Argc, wchar_t **Argv)
+{
+    size_t total = 0;
+    WCHAR *buf;
+
+    if (Exe == NULL) {
+        return NULL;
+    }
+    /* The executable path is unconditionally enclosed in quotes: "\"" + Exe + "\" --service" */
+    total = wcslen(Exe) + 2 + 1 + wcslen(L"--service");
+    for (int i = 0; i < Argc; i++) {
+        total += 1 + QuotedArgLength(Argv[i]);
+    }
+    if (total > 32767) {
+        return NULL;
+    }
+    buf = (WCHAR *)malloc((total + 1) * sizeof(WCHAR));
+    if (buf == NULL) {
+        return NULL;
+    }
+    buf[0] = L'\0';
+    if (_snwprintf_s(buf, total + 1, _TRUNCATE, L"\"%s\" --service", Exe) < 0) {
+        free(buf);
+        return NULL;
+    }
+    for (int i = 0; i < Argc; i++) {
+        if (!AppendQuotedArg(buf, total + 1, Argv[i])) {
+            free(buf);
+            return NULL;
+        }
+    }
+    return buf;
+}
+
 /* Registers the service to run this executable with the given options, started at boot and restarted on failure. */
 static int
-Install(int argc, char **argv)
+Install(int argc, wchar_t **argv)
 {
     WCHAR exe[MAX_PATH];
-    WCHAR commandLine[2048];
+    WCHAR *commandLine = NULL;
     SC_HANDLE scm;
     SC_HANDLE service;
     SERVICE_DESCRIPTIONW description = { L"Presents the Steam Deck OLED's Bluetooth controller to Windows as a USB "
@@ -1572,7 +1716,6 @@ Install(int argc, char **argv)
     SC_ACTION actions[3] = { { SC_ACTION_RESTART, 5000 }, { SC_ACTION_RESTART, 15000 }, { SC_ACTION_RESTART, 60000 } };
     SERVICE_FAILURE_ACTIONSW failure = { 86400, NULL, NULL, 3, actions };
     SERVICE_FAILURE_ACTIONS_FLAG failureFlags = { TRUE };
-    size_t used;
     PWSTR programFiles = NULL;
     DWORD exeLength;
     int allowed = 0;
@@ -1588,15 +1731,15 @@ Install(int argc, char **argv)
         fprintf(stderr, "install: refusing service registration outside Program Files; use packaging\\install.ps1\n");
         return 3; /* No SCM handle is opened before this security boundary. */
     }
-    (void)_snwprintf_s(commandLine, ARRAYSIZE(commandLine), _TRUNCATE, L"\"%s\" --service", exe);
-    for (int i = 0; i < argc; i++) {
-        used = wcslen(commandLine);
-        (void)_snwprintf_s(commandLine + used, ARRAYSIZE(commandLine) - used, _TRUNCATE,
-                           strchr(argv[i], ' ') ? L" \"%S\"" : L" %S", argv[i]);
+    commandLine = BuildServiceCommandLine(exe, argc, argv);
+    if (commandLine == NULL) {
+        fprintf(stderr, "install: command line exceeds maximum length (32,767 characters) or out of memory\n");
+        return 1;
     }
     scm = OpenSCManagerW(NULL, NULL, SC_MANAGER_CREATE_SERVICE);
     if (scm == NULL) {
         fprintf(stderr, "install: cannot open the service manager (Win32 %lu); run elevated\n", GetLastError());
+        free(commandLine);
         return 1;
     }
     service = CreateServiceW(scm, SERVICE_NAME, SERVICE_DISPLAY_NAME, SERVICE_ALL_ACCESS, SERVICE_WIN32_OWN_PROCESS,
@@ -1604,6 +1747,7 @@ Install(int argc, char **argv)
     if (service == NULL) {
         fprintf(stderr, "install: CreateService failed (Win32 %lu)\n", GetLastError());
         CloseServiceHandle(scm);
+        free(commandLine);
         return 1;
     }
     (void)ChangeServiceConfig2W(service, SERVICE_CONFIG_DESCRIPTION, &description);
@@ -1613,9 +1757,11 @@ Install(int argc, char **argv)
         (void)DeleteService(service);
         CloseServiceHandle(service);
         CloseServiceHandle(scm);
+        free(commandLine);
         return 1;
     }
     printf("installed %ls: %ls\n", SERVICE_NAME, commandLine);
+    free(commandLine);
     CloseServiceHandle(service);
     CloseServiceHandle(scm);
     return 0;
@@ -1671,76 +1817,69 @@ Uninstall(void)
 
 /* ------------------------------------------------------------------ options */
 
-/* An option value converted into Out; 0 if it does not convert or fit, which leaves no terminator. */
 static int
-WideArg(const char *Arg, WCHAR *Out, int Capacity)
-{
-    if (MultiByteToWideChar(CP_ACP, 0, Arg, -1, Out, Capacity) == 0) {
-        Out[0] = L'\0';
-        return 0;
-    }
-    return 1;
-}
-
-static int
-ParseArgs(int argc, char **argv)
+ParseArgs(int argc, wchar_t **argv)
 {
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) {
-            const char *text = argv[++i];
-            size_t length = strlen(text);
+        if (wcscmp(argv[i], L"--port") == 0 && i + 1 < argc) {
+            const wchar_t *text = argv[++i];
+            size_t length = wcslen(text);
             long port;
 
-            if (length == 0 || length > 5 || strspn(text, "0123456789") != length) {
+            if (length == 0 || length > 5 || wcsspn(text, L"0123456789") != length) {
                 return 0;
             }
-            port = strtol(text, NULL, 10);
+            port = wcstol(text, NULL, 10);
             if (port < 1024 || port > 65535) {
                 return 0;
             }
             g_Port = (unsigned short)port;
-        } else if (strcmp(argv[i], "--busid") == 0 && i + 1 < argc) {
-            /* It reaches the usbip.exe command line: no quotes, spaces or other syntax. */
-            static const char busIdChars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.-";
-            size_t length = strlen(argv[++i]);
+        } else if (wcscmp(argv[i], L"--busid") == 0 && i + 1 < argc) {
+            /* It reaches the usbip.exe command line: ASCII characters only */
+            static const wchar_t busIdChars[] = L"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.-";
+            const wchar_t *busid = argv[++i];
+            size_t length = wcslen(busid);
 
-            if (length == 0 || length >= sizeof(g_BusId) || strspn(argv[i], busIdChars) != length) {
+            if (length == 0 || length >= sizeof(g_BusId) || wcsspn(busid, busIdChars) != length) {
                 return 0;
             }
-            strcpy_s(g_BusId, sizeof(g_BusId), argv[i]);
-        } else if (strcmp(argv[i], "--stop-file") == 0 && i + 1 < argc) {
-            if (!WideArg(argv[++i], g_StopFile, ARRAYSIZE(g_StopFile))) {
+            for (size_t b = 0; b < length; b++) {
+                g_BusId[b] = (char)busid[b];
+            }
+            g_BusId[length] = '\0';
+        } else if (wcscmp(argv[i], L"--stop-file") == 0 && i + 1 < argc) {
+            if (wcscpy_s(g_StopFile, ARRAYSIZE(g_StopFile), argv[++i]) != 0) {
                 return 0;
             }
-        } else if (strcmp(argv[i], "--log") == 0 && i + 1 < argc) {
-            if (!WideArg(argv[++i], g_LogPath, ARRAYSIZE(g_LogPath))) {
+        } else if (wcscmp(argv[i], L"--log") == 0 && i + 1 < argc) {
+            if (wcscpy_s(g_LogPath, ARRAYSIZE(g_LogPath), argv[++i]) != 0) {
                 return 0;
             }
-        } else if (strcmp(argv[i], "--quiet") == 0) {
+        } else if (wcscmp(argv[i], L"--quiet") == 0) {
             g_Quiet = 1;
-        } else if (strcmp(argv[i], "--service") == 0) {
+        } else if (wcscmp(argv[i], L"--service") == 0) {
             g_ServiceMode = 1;
-        } else if (strcmp(argv[i], "--no-attach") == 0) {
+        } else if (wcscmp(argv[i], L"--no-attach") == 0) {
             g_NoAttach = 1;
-        } else if (strcmp(argv[i], "--allow-user-import") == 0) {
+        } else if (wcscmp(argv[i], L"--allow-user-import") == 0) {
             g_AllowUserImport = 1;
-        } else if (strcmp(argv[i], "--usbip") == 0 && i + 1 < argc) {
-            if (!WideArg(argv[++i], g_UsbipExe, ARRAYSIZE(g_UsbipExe))) {
+        } else if (wcscmp(argv[i], L"--usbip") == 0 && i + 1 < argc) {
+            if (wcscpy_s(g_UsbipExe, ARRAYSIZE(g_UsbipExe), argv[++i]) != 0) {
                 return 0;
             }
-        } else if (strcmp(argv[i], "--backend") == 0 && i + 1 < argc) {
+        } else if (wcscmp(argv[i], L"--backend") == 0 && i + 1 < argc) {
             ++i;
-            if (strcmp(argv[i], "uart") == 0) {
+            if (wcscmp(argv[i], L"uart") == 0) {
                 g_UseUart = 1;
-            } else if (strcmp(argv[i], "stub") != 0) {
+            } else if (wcscmp(argv[i], L"stub") != 0) {
                 return 0;
             }
-        } else if (strcmp(argv[i], "--controller") == 0 && i + 1 < argc) {
-            if (!WideArg(argv[++i], g_Controller, ARRAYSIZE(g_Controller))) {
+        } else if (wcscmp(argv[i], L"--controller") == 0 && i + 1 < argc) {
+            if (wcscpy_s(g_Controller, ARRAYSIZE(g_Controller), argv[++i]) != 0) {
                 return 0;
             }
-        } else if (strcmp(argv[i], "--firmware-dir") == 0 && i + 1 < argc) {
-            if (!WideArg(argv[++i], g_FirmwareDir, ARRAYSIZE(g_FirmwareDir))) {
+        } else if (wcscmp(argv[i], L"--firmware-dir") == 0 && i + 1 < argc) {
+            if (wcscpy_s(g_FirmwareDir, ARRAYSIZE(g_FirmwareDir), argv[++i]) != 0) {
                 return 0;
             }
         } else {
@@ -1884,16 +2023,16 @@ Usage(void)
 }
 
 int
-main(int argc, char **argv)
+wmain(int argc, wchar_t **argv)
 {
     PWSTR programFiles = NULL;
 
-    if (argc == 2 && strcmp(argv[1], "--version") == 0) {
+    if (argc == 2 && wcscmp(argv[1], L"--version") == 0) {
         printf("deckbt-usbip %s\n", DECKBT_VERSION);
         return 0;
     }
 
-    if (argc >= 2 && strcmp(argv[1], "install") == 0) {
+    if (argc >= 2 && wcscmp(argv[1], L"install") == 0) {
         g_ServiceMode = 1;
         if (!ParseArgs(argc - 1, argv + 1)) {
             Usage();
@@ -1901,7 +2040,7 @@ main(int argc, char **argv)
         }
         return Install(argc - 2, argv + 2);
     }
-    if (argc >= 2 && strcmp(argv[1], "uninstall") == 0) {
+    if (argc >= 2 && wcscmp(argv[1], L"uninstall") == 0) {
         return Uninstall();
     }
     QueryPerformanceFrequency(&g_QpcFrequency);

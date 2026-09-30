@@ -1,4 +1,5 @@
 # DeckBtService
+Status: Experimental — tested primarily on one Steam Deck OLED
 
 Bluetooth headset microphones for Windows on the Steam Deck OLED.
 
@@ -10,14 +11,14 @@ It is for the Steam Deck **OLED** only. The Steam Deck LCD has a different Bluet
 
 ## Install
 
-1. Download `DeckBtService-0.1.3.zip` from the [Releases](../../releases) page and extract it.
+1. Download `DeckBtService-0.1.4.zip` from the [Releases](../../releases) page and extract it.
 2. Double-click `install.cmd` and approve the administrator prompt.
 3. If it asks you to restart Windows, restart, then double-click `install.cmd` again. A first install needs one restart.
 
 Release zips are built by [GitHub Actions](.github/workflows/build.yml) from the tagged commit, and each has a signed build-provenance attestation. With the [GitHub CLI](https://cli.github.com/), check that a download was built there from this repository:
 
 ```
-gh attestation verify DeckBtService-0.1.3.zip --repo ethanm0202/DeckBtService
+gh attestation verify DeckBtService-0.1.4.zip --repo ethanm0202/DeckBtService
 ```
 
 [packaging/README-install.md](packaging/README-install.md) has the full steps, what the installer changes on your system, how to uninstall and how to report a problem. The same guide is in the zip.
@@ -26,7 +27,7 @@ gh attestation verify DeckBtService-0.1.3.zip --repo ethanm0202/DeckBtService
 
 ## Status
 
-Published version: 0.1.3. The source includes 0.1.4 fault-handling changes ([changes](CHANGELOG.md)). The revised local candidate passed calls, music and mouse checks under CPU load, Bluetooth Off/On, sleep/wake, and service-crash recovery; its attested release build is pending. These changes are not a demonstrated cure for the controller failure below. Tested on one Steam Deck OLED running Windows 11 25H2, with a Shokz OpenMeet headset and a Bluetooth mouse. Details and measurements: [docs/VERIFICATION.md](docs/VERIFICATION.md).
+Published version: 0.1.4. Tested on one Steam Deck OLED running Windows 11 25H2, with a Shokz OpenMeet headset and a Bluetooth mouse. The attested release build passed calls, music and mouse checks under CPU load, Bluetooth Off/On, sleep/wake, and service-crash recovery. These changes are not a demonstrated cure for the controller failure below. Details and measurements: [docs/VERIFICATION.md](docs/VERIFICATION.md).
 
 What works:
 
@@ -47,7 +48,7 @@ Known limitations:
 - **Older headsets** that only support narrowband call audio (no wideband) are supported in the code but untested.
 - **Heavy load can still cause a rare crackle in calls.** The service's audio threads use Windows' audio scheduler, so opening apps no longer stutters music; under deliberate full-CPU bursts a call still had one audible crackle in three bursts.
 - **Bluetooth depends on the service.** If the service restarts, Bluetooth disappears for a few seconds and devices reconnect. There is no fallback to the stock driver while it is installed.
-- **A controller failure required a Windows restart on v0.1.3.** The cause is still unknown. The unreleased writer changes have regression coverage, but have not established that this failure is prevented or recoverable without restarting Windows.
+- **A controller failure required a Windows restart on v0.1.3.** The cause is still unknown. The v0.1.4 writer changes have regression coverage, but have not established that this failure is prevented or recoverable without restarting Windows.
 - **Windows sees a new adapter,** named Generic Bluetooth Adapter. Your headset's audio devices may appear as new ones, so an app that remembered a specific microphone or speaker may need it picked again.
 - **Two Windows crashes (blue screens)** were recorded while earlier builds were being tested. Both have mitigations in this release, but that is not proof they cannot happen again; see [docs/VERIFICATION.md](docs/VERIFICATION.md).
 - **The programs are not code-signed,** so Windows may warn about an unknown publisher when you run them. Their origin can be checked with the build attestation above instead.

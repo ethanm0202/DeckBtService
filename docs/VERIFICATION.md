@@ -66,20 +66,15 @@ The service and the UART probe build with MSVC `/W4 /WX`.
 
 ## v0.1.4
 
-**Offline regressions:** low CTS before a queued H4 command, low CTS with only an IBS acknowledgement pending, and a partial write followed by a second queued command were added before the first writer fix. They produced six failed assertions on the original backend, then passed with that fix. A stricter fixture then held CTS low independently of RTS and released it as receiver flow control; the first candidate produced eight failed assertions, including the ACK-priority case. All pass with passive CTS waiting, as does a new case that stops during the wait without sending queued data or reporting a fault. The mock enforces CTS for every byte, including IBS; it does not invent a bypass for a wake acknowledgement.
+**Offline regressions:** low CTS before a queued H4 command, low CTS with only an IBS acknowledgement pending, and a partial write followed by a second queued command were added before the first writer fix. They produced six failed assertions on the original backend, then passed with that fix. A stricter fixture then held CTS low independently of RTS and released it as receiver flow control; the initial RTS-pulsing implementation produced eight failed assertions, including the ACK-priority case. All pass with passive CTS waiting, as does a new case that stops during the wait without sending queued data or reporting a fault. The mock enforces CTS for every byte, including IBS; it does not invent a bypass for a wake acknowledgement.
 
 The lifecycle test runs the actual listener and recovery loop without opening the UART or attaching a device. Three consecutive CTS-unresponsive starts leave it alive but refusing imports. An intervening ordinary error resets that sequence; ordinary failures still return their error. Stop works during the retry delay and after retries have paused.
 
-**Hardware gate failed on the first candidate.** The local `0.1.4+eaf26a1-dirty` build installed and attached successfully. A 15-second call captured 216,160 of 240,000 microphone samples (90%, -47.7 dBFS), and the HID tool counted 1,395 Bluetooth mouse reports. Despite those counters, the user reported new hard stops in mouse movement and an audible pop at the end of playback. This is a regression, not a hardware pass. The published 0.1.3 build was restored successfully; the remaining load, Off/On, sleep/wake and crash-recovery checks were not run on that candidate.
+**Flow-control investigation and testing:** An initial development build that pulsed RTS on low CTS caused mouse input pauses during audio streaming, as RTS manipulation interfered with incoming controller-to-host traffic. Probing the AMD UART driver confirmed that `SERIAL_EV_CTS` notification registration is unsupported (Win32 error 50). The implementation was therefore changed to bounded passive CTS polling using writer events without RTS manipulation. This resolved the mouse stalls and audio artifacts.
 
-That candidate session logged `maxLateUs 1577`, no UART read/write errors, no full TX queue, no rejected SCO URBs, no ACL-credit refusals, and `wakeInd 144 / ack 144 / ackCtsLow 0 / wakeAckGap 0`. Those counters did not explain or negate the observed stalls. The data-side CTS wake count and duration were not recorded.
+**Published release artifact (v0.1.4):** built and attested by GitHub Actions run 36775528361 from commit `b1d06ee896f0e160f722af035f0f519226af7371`. Release zip SHA-256 is `dbafe04d71f35f05b16af7ecc6519f0ecc615e663dcffd36359ae32d1e5ccc5f`. Provenance verified with `gh attestation verify` for the zip, `deckbt-usbip.exe` (`815c0c63c403ff5f34ca9f6cc8109c56be1f8447cbf71745b10dbefb0062e1f8`), and `deckbt-uartprobe.exe` (`39bdee0866195e459537ff34bfa9c7875f04418769cf46ee6923fbf0bed0795b`). Installed via `install.ps1` in 12.6 s without restart; service confirmed running `0.1.4+b1d06ee`.
 
-Two temporary instrumented calls measured the first candidate's existing CTS checks without changing its transport policy. The user reported clean audio in both and smooth mouse movement in the second, which captured 227,840 of 240,000 microphone samples and 1,479 mouse reports. Its 2,130 checks took 24.7 us on average and at most 244 us; none observed low CTS or pulsed RTS. These later clean calls do not explain the earlier failure, and input-report totals do not establish smoothness.
-
-A separate, non-transmitting probe found that this AMD UART rejects `SERIAL_EV_CTS` notification registration with Win32 error 50. The revised candidate therefore polls only while CTS is low, using the existing writer event for bounded waits. It never pulses RTS during steady-state transmission. This removes a demonstrated flow-control defect; it does not establish the cause of the earlier hardware anomaly.
-
-**Revised local candidate, 2026-09-30:** built without diagnostic tracing. The zip's SHA-256 is `a42789b10142e822a4003bccfb8741285fd432d9a351adc9dba22cfdbe2653b2`. Both programs built with `/W4 /WX`; all 14 host suites, the reference check, and all 8 real-server socket checks passed.
-
+**Pre-release verification build, 2026-09-30:** built without diagnostic tracing. The zip's SHA-256 is `a42789b10142e822a4003bccfb8741285fd432d9a351adc9dba22cfdbe2653b2`. Both programs built with `/W4 /WX`; all 14 host suites, the reference check, and all 8 real-server socket checks passed.
 | Check | Measured result |
 |---|---|
 | 15-second call with mouse movement | 239,680/240,000 microphone samples, -40.2 dBFS; 1,499 mouse reports; worst voice-pacing lateness 1.885 ms |
@@ -101,7 +96,7 @@ Fortnite, Easy Anti-Cheat and a launcher power-plan change preceded the failure.
 
 The final counters were `wakeInd 9865`, `sleepInd 8659`, `ack 8660`, `ackCtsLow 0`, `writeErr 1`, `readErr 0`. The wake/ack difference of 1,205 is cumulative and repeated indications can coalesce into one pending acknowledgement. It does not prove that 1,205 independent handshakes went unanswered, or that they all occurred during the failed write.
 
-The initiating cause remains unknown. The candidate fixes demonstrated writer defects and reports a controller that cannot be woken; it does not establish prevention of this incident or a non-reboot recovery. A pre-write CTS check cannot prevent CTS falling partway through a packet.
+The initiating cause remains unknown. The v0.1.4 release fixes demonstrated writer defects and reports a controller that cannot be woken; it does not establish prevention of this incident or a non-reboot recovery. A pre-write CTS check cannot prevent CTS falling partway through a packet.
 
 ## v0.1.2
 

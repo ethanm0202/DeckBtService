@@ -121,6 +121,12 @@ typedef struct _HCI_TRANSPORT_OPS {
      * empty or the backend does not track order. May be NULL (no ordering).
      */
     unsigned char (*PeekOrder)(const HCI_TRANSPORT *Transport, HCI_STREAM Stream, unsigned long *Order);
+    /*
+     * Flush all queued synchronous (SCO) voice packets, both inbound and outbound.
+     * Called when the voice stream ends (e.g. SCO alternate setting change to 0) so
+     * stranded packets cannot leak into a subsequent call.
+     */
+    void (*FlushSco)(HCI_TRANSPORT *Transport);
 } HCI_TRANSPORT_OPS;
 
 struct _HCI_TRANSPORT {
@@ -195,6 +201,14 @@ HciTransportReset(HCI_TRANSPORT *Transport)
         Transport->Ops->Reset(Transport);
     }
 }
+static __inline void
+HciTransportFlushSco(HCI_TRANSPORT *Transport)
+{
+    if (Transport != NULL && Transport->Ops != NULL && Transport->Ops->FlushSco != NULL) {
+        Transport->Ops->FlushSco(Transport);
+    }
+}
+
 
 static __inline unsigned char
 HciTransportPeekOrder(const HCI_TRANSPORT *Transport, HCI_STREAM Stream, unsigned long *Order)

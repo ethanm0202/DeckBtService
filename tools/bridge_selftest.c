@@ -300,10 +300,13 @@ int main(void)
             0x00, 0xFC              /* Opcode 0xFC00 - EDL patch download */
         };
 
+        bridge.HostCommandsPending = 1;
         ok = HciBridgeOnEvent(&bridge, vendorComplete, sizeof(vendorComplete));
         expEventsReceived++;
         expEventsSuppressedVendor++;
         CHECK(ok == 0, "Command_Complete for vendor opcode 0xFC48 is suppressed");
+        CHECK(bridge.HostCommandsPending == 1,
+              "Late vendor Command_Complete does not decrement HostCommandsPending");
         CHECK(HciTransportHasStream(&transport, HciStreamEvent) == 0,
               "Vendor Command_Complete does not reach the host event stream");
 
@@ -311,9 +314,54 @@ int main(void)
         expEventsReceived++;
         expEventsSuppressedVendor++;
         CHECK(ok == 0, "Command_Status for vendor opcode 0xFC00 is suppressed");
+        CHECK(bridge.HostCommandsPending == 1,
+              "Late vendor Command_Status does not decrement HostCommandsPending");
         CHECK(HciTransportHasStream(&transport, HciStreamEvent) == 0,
               "Vendor Command_Status does not reach the host event stream");
+        bridge.HostCommandsPending = 0;
+
+        /*
+         * A host vendor command is matched to its completion by opcode, not by count: a late
+         * boot completion for a different vendor opcode must not retire it or reach the host.
+         */
+        {
+            const unsigned char ordinaryCmd[3] = { 0x01, 0x10, 0x00 };   /* Read_Local_Version */
+            const unsigned char hostVendorCmd[3] = { 0x17, 0xFC, 0x00 };
+            const unsigned char fc17Complete[6] = { 0x0E, 0x04, 0x01, 0x17, 0xFC, 0x00 };
+
+            ok = HciTransportSubmitCommand(&transport, ordinaryCmd, sizeof(ordinaryCmd));
+            expCommandsSubmitted++;
+            expCommandsSentToWire++;
+            CHECK(ok == 1, "Host submits an ordinary command (Read_Local_Version)");
+            ok = HciTransportSubmitCommand(&transport, hostVendorCmd, sizeof(hostVendorCmd));
+            expCommandsSubmitted++;
+            expCommandsSentToWire++;
+            CHECK(ok == 1, "Host submits vendor command (0xFC17)");
+            CHECK(bridge.HostCommandsPending == 2 && bridge.HostVendorOpcodeCount == 1,
+                  "Two host commands pending, one of them vendor 0xFC17");
+
+            ok = HciBridgeOnEvent(&bridge, vendorComplete, sizeof(vendorComplete));
+            expEventsReceived++;
+            expEventsSuppressedVendor++;
+            CHECK(ok == 0, "Late boot 0xFC48 completion is suppressed while host 0xFC17 is pending");
+            CHECK(bridge.HostCommandsPending == 2 && bridge.HostVendorOpcodeCount == 1,
+                  "Late 0xFC48 completion does not retire the host 0xFC17 command");
+            CHECK(HciTransportHasStream(&transport, HciStreamEvent) == 0,
+                  "Late 0xFC48 completion does not reach the host");
+
+            ok = HciBridgeOnEvent(&bridge, fc17Complete, sizeof(fc17Complete));
+            expEventsReceived++;
+            expEventsQueued++;
+            CHECK(ok == 1, "0xFC17 completion is forwarded to the host");
+            CHECK(bridge.HostCommandsPending == 1 && bridge.HostVendorOpcodeCount == 0,
+                  "0xFC17 completion retires exactly one host command, leaving the ordinary one pending");
+            CHECK(HciTransportHasStream(&transport, HciStreamEvent) == 1,
+                  "Host event stream receives the 0xFC17 completion");
+            HciTransportPopStream(&transport, HciStreamEvent, popBuf, sizeof(popBuf), &written);
+            bridge.HostCommandsPending = 0;
+        }
     }
+
 
     /* Mock injects ordinary Command_Complete (0x0E, plen 4) for HCI_Reset */
     {
@@ -712,6 +760,66 @@ int main(void)
             CHECK(mock.ScoHistory[i][3] == expectedIdx,
                   "Outbound mock received surviving packet %u with payload index %u", i, expectedIdx);
         }
+    }
+
+    /* Part C: Outbound SCO flush prevents stale packet leakage across call boundaries */
+    {
+        unsigned char stalePkt[4] = { 0x50, 0x00, 0x01, 0xAA };
+        unsigned char freshPkt[4] = { 0x51, 0x00, 0x01, 0xBB };
+
+        /* Simulate final packet of previous call queued while wire refused */
+        mock.RefuseSco = 1;
+        ok = HciTransportSubmitSco(&transport, stalePkt, sizeof(stalePkt));
+        expScoSubmitted++;
+        CHECK(ok == 1, "Final SCO packet accepted into FIFO while wire busy");
+        CHECK(bridge.OutboundScoCount == 1, "Stale packet remains queued in bridge SCO FIFO");
+
+        /* Call ends: voice stream flushed */
+        HciTransportFlushSco(&transport);
+        CHECK(bridge.OutboundScoCount == 0, "FlushSco empties outbound SCO FIFO immediately");
+
+        /* New call begins on wire */
+        mock.RefuseSco = 0;
+        ok = HciTransportSubmitSco(&transport, freshPkt, sizeof(freshPkt));
+        expScoSubmitted++;
+        expScoSentToWire++;
+        CHECK(ok == 1, "Fresh SCO packet submitted on new call");
+        CHECK(mock.LastScoLength == sizeof(freshPkt) && mock.LastSco[3] == 0xBB,
+              "Wire received fresh packet (0xBB); stale packet (0xAA) from previous call was discarded");
+        CHECK(bridge.OutboundScoCount == 0, "Outbound SCO FIFO drained cleanly");
+    }
+
+    /* Part D: Multi-handle SCO disconnection purges only the disconnected handle's queued audio */
+    {
+        unsigned char pkt40[4] = { 0x40, 0x00, 0x01, 0x40 };
+        unsigned char pkt41[4] = { 0x41, 0x00, 0x01, 0x41 };
+        const unsigned char discEvt40[6] = { 0x05, 0x04, 0x00, 0x40, 0x00, 0x16 };
+
+        mock.RefuseSco = 1;
+        ok = HciTransportSubmitSco(&transport, pkt40, sizeof(pkt40));
+        expScoSubmitted++;
+        CHECK(ok == 1, "Queue SCO packet for handle 0x0040");
+        ok = HciTransportSubmitSco(&transport, pkt41, sizeof(pkt41));
+        expScoSubmitted++;
+        CHECK(ok == 1, "Queue SCO packet for handle 0x0041");
+        CHECK(bridge.OutboundScoCount == 2, "Two packets queued across different handles in Outbound SCO FIFO");
+
+        /* Disconnect handle 0x0040 */
+        ok = HciBridgeOnEvent(&bridge, discEvt40, sizeof(discEvt40));
+        expEventsReceived++;
+        expEventsQueued++;
+        CHECK(ok == 1, "Disconnection_Complete for handle 0x0040 processed");
+        CHECK(bridge.OutboundScoCount == 1, "Outbound SCO FIFO has 1 packet left (handle 0x0041 preserved, not wiped)");
+
+        HciTransportPopStream(&transport, HciStreamEvent, popBuf, sizeof(popBuf), &written);
+
+        /* Wire clears: drain remaining SCO */
+        mock.RefuseSco = 0;
+        HciBridgeDrainOutboundSco(&bridge);
+        expScoSentToWire++;
+        CHECK(mock.LastScoLength == sizeof(pkt41) && mock.LastSco[0] == 0x41,
+              "Wire received handle 0x0041 packet; handle 0x0040 packet was cleanly discarded");
+        CHECK(bridge.OutboundScoCount == 0, "Outbound SCO FIFO fully drained");
     }
 
     /* =========================================================================

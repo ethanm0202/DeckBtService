@@ -45,6 +45,9 @@ static unsigned char HciBridgePeekOrder(
     const HCI_TRANSPORT *Transport,
     HCI_STREAM Stream,
     unsigned long *Order);
+static void HciBridgeFlushScoTransport(
+    HCI_TRANSPORT *Transport);
+
 
 /* Static vtable exposed to the front end */
 static const HCI_TRANSPORT_OPS g_HciBridgeTransportOps = {
@@ -55,7 +58,8 @@ static const HCI_TRANSPORT_OPS g_HciBridgeTransportOps = {
     HciBridgePopStream,
     HciBridgeLastEventLength,
     HciBridgeReset,
-    HciBridgePeekOrder
+    HciBridgePeekOrder,
+    HciBridgeFlushScoTransport
 };
 
 /* Internal helper: compute sum of Outstanding over all InUse handle entries */
@@ -176,7 +180,29 @@ static void HciBridgeRecordDisconnection(HCI_BRIDGE *Bridge, unsigned short Hand
                 Bridge->AvailableAclCredits = (unsigned short)(Bridge->AvailableAclCredits + lostCredits);
             }
             HciBridgeClampCredits(Bridge);
-            return;
+            break;
+        }
+    }
+    /* Remove only queued outbound SCO packets matching the disconnected handle */
+    if (Bridge->OutboundScoCount > 0) {
+        HCI_BRIDGE_SCO_SLOT kept[HCI_BRIDGE_SCO_OUT_FIFO_DEPTH];
+        unsigned int keptCount = 0;
+
+        for (i = 0; i < Bridge->OutboundScoCount; i++) {
+            unsigned int idx = (Bridge->OutboundScoHead + i) % HCI_BRIDGE_SCO_OUT_FIFO_DEPTH;
+            unsigned short scoHandle = (unsigned short)(((unsigned short)Bridge->OutboundScoFifo[idx].Data[0] |
+                                                         ((unsigned short)Bridge->OutboundScoFifo[idx].Data[1] << 8)) & 0x0FFFu);
+            if (scoHandle != Handle) {
+                kept[keptCount++] = Bridge->OutboundScoFifo[idx];
+            }
+        }
+        if (keptCount != Bridge->OutboundScoCount) {
+            for (i = 0; i < keptCount; i++) {
+                Bridge->OutboundScoFifo[i] = kept[i];
+            }
+            Bridge->OutboundScoHead = 0;
+            Bridge->OutboundScoTail = (unsigned char)keptCount;
+            Bridge->OutboundScoCount = (unsigned char)keptCount;
         }
     }
 }
@@ -247,10 +273,13 @@ static void HciBridgeNoteRfcomm(HCI_BRIDGE *Bridge, const unsigned char *Packet,
 }
 
 /* A command reached the controller: it takes a credit and awaits its Command_Status/Complete. */
-static void HciBridgeNoteHostCommand(HCI_BRIDGE *Bridge)
+static void HciBridgeNoteHostCommand(HCI_BRIDGE *Bridge, unsigned short Opcode)
 {
     if (Bridge->HostCommandsPending < 0xFFu) {
         Bridge->HostCommandsPending++;
+    }
+    if ((Opcode >> 10) == 0x3Fu && Bridge->HostVendorOpcodeCount < HCI_BRIDGE_MAX_HOST_VENDOR_CMDS) {
+        Bridge->HostVendorOpcodes[Bridge->HostVendorOpcodeCount++] = Opcode;
     }
     if (Bridge->CommandCredits > 0u) {
         Bridge->CommandCredits--;
@@ -336,7 +365,9 @@ void HciBridgeSetReady(
                     Bridge->HeldCommandLength);
                 if (ok) {
                     Bridge->Counters.CommandsSentToWire++;
-                    HciBridgeNoteHostCommand(Bridge);
+                    unsigned short opcode = (unsigned short)((unsigned short)Bridge->HeldCommand[0] |
+                                                             ((unsigned short)Bridge->HeldCommand[1] << 8));
+                    HciBridgeNoteHostCommand(Bridge, opcode);
                 } else {
                     Bridge->Counters.CommandsFailedWire++;
                 }
@@ -465,7 +496,8 @@ static unsigned char HciBridgeSubmitCommand(
             bridge->Wire.Context, Packet, Length);
         if (ok) {
             bridge->Counters.CommandsSentToWire++;
-            HciBridgeNoteHostCommand(bridge);
+            unsigned short opcode = (unsigned short)((unsigned short)Packet[0] | ((unsigned short)Packet[1] << 8));
+            HciBridgeNoteHostCommand(bridge, opcode);
             return 1;
         } else {
             bridge->Counters.CommandsFailedWire++;
@@ -749,9 +781,31 @@ static void HciBridgeReset(HCI_TRANSPORT *Transport)
     bridge->HeldCommandPending = 0;
     bridge->HeldCommandLength = 0;
 
+    bridge->HostCommandsPending = 0;
+    bridge->HostVendorOpcodeCount = 0;
     HciBridgeRefillCredits(bridge);
 
     bridge->Counters.Resets++;
+}
+
+void HciBridgeFlushSco(HCI_BRIDGE *Bridge)
+{
+    if (!Bridge) {
+        return;
+    }
+    Bridge->OutboundScoHead = 0;
+    Bridge->OutboundScoTail = 0;
+    Bridge->OutboundScoCount = 0;
+    Bridge->ScoInHead = 0;
+    Bridge->ScoInTail = 0;
+    Bridge->ScoInCount = 0;
+}
+
+static void HciBridgeFlushScoTransport(HCI_TRANSPORT *Transport)
+{
+    if (Transport != NULL && Transport->Context != NULL) {
+        HciBridgeFlushSco((HCI_BRIDGE *)Transport->Context);
+    }
 }
 
 /* ------------------------------------------------ Inbound Wire Feeds */
@@ -788,6 +842,7 @@ unsigned char HciBridgeOnEvent(
             HciBridgeRefillCredits(Bridge);
             Bridge->LinkCount = 0;   /* a reset ends every connection without Disconnection_Complete */
             Bridge->HostCommandsPending = 0;   /* and aborts every command still awaiting a reply */
+            Bridge->HostVendorOpcodeCount = 0;
         } else if (opcode == 0x1005u && status == 0x00u && Length >= 13) {
             unsigned short totalAcl = (unsigned short)((unsigned short)Packet[9] | ((unsigned short)Packet[10] << 8));
             unsigned short wasTotal = Bridge->TotalAclBuffers;
@@ -849,6 +904,28 @@ unsigned char HciBridgeOnEvent(
                                              Bridge->DisconnectInFlight && Bridge->HostCommandsPending == 0u);
 
         Bridge->CommandCredits = reply[0];
+
+        /* Boot-chatter suppression: vendor opcodes (OGF 0x3F, e.g. 0xFC00, 0xFC17, 0xFC48) are
+         * dropped unless the host sent a vendor command with this exact opcode. A late bring-up
+         * completion must neither retire a host command nor reach the host. A matched completion
+         * falls through to the ordinary accounting below and is forwarded. */
+        if ((opcode >> 10) == 0x3Fu) {
+            unsigned char match = 0;
+            for (unsigned char v = 0; v < Bridge->HostVendorOpcodeCount; v++) {
+                if (Bridge->HostVendorOpcodes[v] == opcode) {
+                    for (unsigned char k = v; k + 1u < Bridge->HostVendorOpcodeCount; k++) {
+                        Bridge->HostVendorOpcodes[k] = Bridge->HostVendorOpcodes[k + 1u];
+                    }
+                    Bridge->HostVendorOpcodeCount--;
+                    match = 1;
+                    break;
+                }
+            }
+            if (!match) {
+                Bridge->Counters.EventsSuppressedVendor++;
+                return 0;
+            }
+        }
         if (ours) {
             Bridge->DisconnectInFlight = 0;
             if (Packet[2] != 0x00u) {
@@ -878,22 +955,6 @@ unsigned char HciBridgeOnEvent(
      * an unissued command (compare upstream Linux hci_qca.c:
      * https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/drivers/bluetooth/hci_qca.c?id=a5218c6474df97f2e7f3af15dcdfc674bae5c137).
      */
-    if (Packet[0] == 0x0Eu && Length >= 5) {
-        unsigned short opcode = (unsigned short)((unsigned short)Packet[3] | ((unsigned short)Packet[4] << 8));
-        if ((opcode >> 10) == 0x3Fu) {
-            Bridge->Counters.EventsSuppressedVendor++;
-            return 0;
-        }
-    }
-
-    if (Packet[0] == 0x0Fu && Length >= 6) {
-        unsigned short opcode = (unsigned short)((unsigned short)Packet[4] | ((unsigned short)Packet[5] << 8));
-        if ((opcode >> 10) == 0x3Fu) {
-            Bridge->Counters.EventsSuppressedVendor++;
-            return 0;
-        }
-    }
-
 
 
     if (!Bridge->Ready) {

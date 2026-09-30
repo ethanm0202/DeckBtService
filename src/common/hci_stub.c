@@ -426,6 +426,12 @@ HciStubTransportReset(
         HciStubInit(stub);
     }
 }
+static VOID
+HciStubTransportFlushSco(HCI_TRANSPORT *Transport)
+{
+    (VOID)Transport;
+}
+
 
 static const HCI_TRANSPORT_OPS g_HciStubOps = {
     HciStubTransportSubmitCommand,
@@ -435,6 +441,8 @@ static const HCI_TRANSPORT_OPS g_HciStubOps = {
     HciStubTransportPopStream,
     HciStubTransportLastEventLength,
     HciStubTransportReset,
+    NULL,
+    HciStubTransportFlushSco,
 };
 
 VOID

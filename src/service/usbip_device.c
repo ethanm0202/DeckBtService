@@ -306,6 +306,7 @@ ScoFlush(USBIP_DEVICE *Device)
         }
     }
     ScoResetStreams(Device);
+    HciTransportFlushSco(Device->Transport);
 }
 
 static void

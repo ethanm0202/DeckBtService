@@ -56,7 +56,7 @@ PrintHex(const char *Label, const unsigned char *Data, unsigned long Length)
 }
 
 int
-main(int argc, char **argv)
+wmain(int argc, wchar_t **argv)
 {
     WCHAR controller[200] = L"ACPI\\AMDI0020\\4";
     WCHAR path[512];
@@ -68,8 +68,8 @@ main(int argc, char **argv)
     int result = 1;
 
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--controller") == 0 && i + 1 < argc &&
-            MultiByteToWideChar(CP_ACP, 0, argv[i + 1], -1, controller, ARRAYSIZE(controller)) != 0) {
+        if (wcscmp(argv[i], L"--controller") == 0 && i + 1 < argc &&
+            wcscpy_s(controller, ARRAYSIZE(controller), argv[i + 1]) == 0) {
             i++;
         } else {
             fprintf(stderr, "usage: deckbt-uartprobe [--controller <instance id>]\n");
