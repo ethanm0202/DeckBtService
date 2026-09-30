@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include "qca_backend.h"
+#include "mmcss.h"
 
 #define INIT_BAUD               115200ul
 #define OPER_BAUD               3000000ul
@@ -282,7 +283,11 @@ ReaderThread(LPVOID Parameter)
     QCA_BACKEND *B = (QCA_BACKEND *)Parameter;
     UCHAR buffer[READ_BUFFER];
     ULONG failures = 0;
+    HANDLE mmcss = MmcssEnter();
 
+    if (mmcss == NULL) {
+        LOG(B, "uart reader: MMCSS registration failed (%lu); normal priority", GetLastError());
+    }
     while (!B->Stop) {
         ULONG got = 0;
         ULONG fed = 0;
@@ -344,6 +349,7 @@ ReaderThread(LPVOID Parameter)
             }
         }
     }
+    MmcssLeave(mmcss);
     return 0;
 }
 
@@ -466,7 +472,11 @@ WriterThread(LPVOID Parameter)
     QCA_BACKEND *B = (QCA_BACKEND *)Parameter;
     QCA_BACKEND_TX_SLOT *slot;
     UCHAR packet[QCA_BACKEND_TX_SLOT_BYTES];
+    HANDLE mmcss = MmcssEnter();
 
+    if (mmcss == NULL) {
+        LOG(B, "uart writer: MMCSS registration failed (%lu); normal priority", GetLastError());
+    }
     while (!B->Stop && !B->WriterStop) {
         (void)WaitForSingleObject(B->TxEvent, 1000);
         for (;;) {
@@ -497,6 +507,7 @@ WriterThread(LPVOID Parameter)
             }
         }
     }
+    MmcssLeave(mmcss);
     return 0;
 }
 

@@ -167,6 +167,8 @@ Threads:
 - **Writer** (steady state): sends queued packets whole, and acknowledges controller `WAKE_IND` bytes between packets. Acknowledgements are never sent from the read path. While CTS is deasserted nothing is written, and the controller repeats an unanswered `WAKE_IND`.
 - **Front-end calls** (`Submit*`) never block: packets are queued for the writer (32 slots).
 
+The reader and writer, like the service's pacing and USB/IP session threads, join the MMCSS "Pro Audio" task, as the Windows audio engine's threads do (`src/service/mmcss.h`). At normal priority an application starting delayed them by up to 112 ms, heard as crackle in calls and stutter in music. A thread that MMCSS refuses logs it and runs at normal priority.
+
 ## The HCI bridge
 
 `src/common/hci_bridge.c`:

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.2 (2026-09-29)
+
+**Audio under load.** Opening an app or any other burst of CPU load made music on a Bluetooth headset stutter and calls crackle. The service's audio threads (voice pacing, the USB/IP session, the UART reader and writer) ran at normal priority, and the voice pacing was measured running up to 112 ms late. They now join Windows' Multimedia Class Scheduler (MMCSS) "Pro Audio" task, as Windows' own audio engine does. Under the same load, pacing stayed within 1.8 ms, the microphone delivered 98% of its audio instead of 85%, and music did not stutter. A thread that MMCSS refuses logs it and keeps running at normal priority.
+
+Upgrading: extract the new zip and run its `install.cmd`; no restart is needed.
+
 ## 0.1.1 (2026-09-29)
 
 Fixes for the findings of a static code and security review of v0.1.0. None was a memory-safety or privilege-escalation defect. Upgrading: extract the new zip and run its `install.cmd`; no restart is needed.

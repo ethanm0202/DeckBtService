@@ -10,7 +10,7 @@ It is for the Steam Deck **OLED** only. The Steam Deck LCD has a different Bluet
 
 ## Install
 
-1. Download `DeckBtService-0.1.1.zip` from the [Releases](../../releases) page and extract it.
+1. Download `DeckBtService-0.1.2.zip` from the [Releases](../../releases) page and extract it.
 2. Double-click `install.cmd` and approve the administrator prompt.
 3. If it asks you to restart Windows, restart, then double-click `install.cmd` again. A first install needs one restart.
 
@@ -20,7 +20,7 @@ It is for the Steam Deck **OLED** only. The Steam Deck LCD has a different Bluet
 
 ## Status
 
-Version 0.1.1 ([changes](CHANGELOG.md)). Tested on one Steam Deck OLED running Windows 11 25H2, with a Shokz OpenMeet headset and a Bluetooth mouse. Details and measurements: [docs/VERIFICATION.md](docs/VERIFICATION.md).
+Version 0.1.2 ([changes](CHANGELOG.md)). Tested on one Steam Deck OLED running Windows 11 25H2, with a Shokz OpenMeet headset and a Bluetooth mouse. Details and measurements: [docs/VERIFICATION.md](docs/VERIFICATION.md).
 
 What works:
 
@@ -39,6 +39,7 @@ Known limitations:
 - **Not yet tested:** Memory Integrity (Core isolation), Secure Boot, and games with kernel anti-cheat. The test Deck had Memory Integrity and Secure Boot off.
 - **Other Bluetooth uses** such as pairing new devices, game controllers, several devices at once or file transfer have not been tested systematically.
 - **Older headsets** that only support narrowband call audio (no wideband) are supported in the code but untested.
+- **Heavy load can still cause a rare crackle in calls.** The service's audio threads use Windows' audio scheduler, so opening apps no longer stutters music; under deliberate full-CPU bursts a call still had one audible crackle in three bursts.
 - **Bluetooth depends on the service.** If the service restarts, Bluetooth disappears for a few seconds and devices reconnect. There is no fallback to the stock driver while it is installed.
 - **Windows sees a new adapter,** named Generic Bluetooth Adapter. Your headset's audio devices may appear as new ones, so an app that remembered a specific microphone or speaker may need it picked again.
 - **Two Windows crashes (blue screens)** were recorded while earlier builds were being tested. Both have mitigations in this release, but that is not proof they cannot happen again; see [docs/VERIFICATION.md](docs/VERIFICATION.md).

@@ -1,6 +1,6 @@
 # Verification
 
-What was tested for DeckBtService as of v0.1.1, and the results. Everything below was measured on one Steam Deck OLED. The install, upgrade and uninstall results come from the v0.1.0 release package; the other device results come from the builds leading up to it. What changed for v0.1.1 and how it was checked is under [v0.1.1](#v011). Results measured with usbip-win2 0.9.8.0, before the move to 0.9.8.1, are marked as such.
+What was tested for DeckBtService as of v0.1.2, and the results. Everything below was measured on one Steam Deck OLED. The install, upgrade and uninstall results come from the v0.1.0 release package; the other device results come from the builds leading up to it. The full uninstall-and-reinstall run behind v0.1.2 is under [v0.1.2](#v012); the v0.1.1 fixes under [v0.1.1](#v011). Results measured with usbip-win2 0.9.8.0, before the move to 0.9.8.1, are marked as such.
 
 ## Test environment
 
@@ -62,6 +62,44 @@ The service and the UART probe build with MSVC `/W4 /WX`.
 ### Fuzzing
 
 `tools\fuzz.cmd` builds two libFuzzer targets with AddressSanitizer: the USB/IP device model (`fuzz_usbip_device.c`) and the controller side (`fuzz_controller.c`). Each run lasts 60 s per target. The last run before v0.1.1 executed 930,374 USB/IP and 126,087 controller inputs with no findings. Before v0.1.0: 1,040,357 and 154,179; earlier runs of 1.16–1.2 million and 0.23–0.34 million inputs were also clean after the fixes listed under [Other defects fixed](#other-defects-fixed).
+
+## v0.1.2
+
+Measured on the test Deck on 2026-09-29 with the Shokz OpenMeet and the Razer Orochi V2, the user wearing the headset and moving the mouse.
+
+**Full uninstall and reinstall from the published v0.1.1 zip** (SHA-256 checked against the release notes; all files against `SHA256SUMS`):
+
+| Step | Result |
+|---|---|
+| `uninstall.cmd -RemoveUsbip -RemoveLogs` | 30 s; asked for a restart (usbip-win2 drivers). Service, program folder, data folder, usbip-win2, the three deny entries with both policy flags and keys, and `SerCxFriendlyName` all removed; stock `QcBluetooth` back on the radio, problem 0; all four pairings kept |
+| Stock Bluetooth after the restart | Shokz connected as headphones only (no hands-free microphone, the stock limitation); music heard clearly |
+| First `install.cmd` | 51 s, restart requested: usbip-win2 0.9.8.1 downloaded, hash-checked and installed; stock radio blocked and removed; UART published; service registered |
+| After the restart | service started 8 s after boot, radio ready 3.45 s later, Shokz reconnected with its hands-free microphone |
+| Second `install.cmd` | exit 0 in 13 s |
+
+**Functional tests** (v0.1.1, then the v0.1.2 code):
+
+| Test | Result |
+|---|---|
+| Mouse | 1,157 input reports in 15 s |
+| Music | chime and music clear |
+| Calls (15 s, twice) | `miccheck` PASS, −45 dBFS, 94–95% of samples, natural speech; 2,059 mouse reports during the second call |
+| 5-minute call | PASS, 99% of samples |
+| Bluetooth Off/On | headset microphone back 8 s after On; call PASS; mouse 1,127 reports |
+| Service killed | restarted by Windows after 5 s; radio up 6.6 s later (controller reset from running firmware); microphone back 32 s after the kill; call PASS; mouse 1,058 reports |
+| Sleep and wake (two cycles) | radio stopped before each sleep and back 3.4 s after each resume; the hands-free workaround ran once per resume; call PASS; mouse 485 reports |
+| Discovery | 20 LE and 4 Classic devices (30 s scan) |
+| Logs | no bugcheck, no Bluetooth or usbip warnings in the System log; in every session 0 stalls, 0 credit refusals, 0 rejected voice transfers (44,239 OUT and 41,707 IN transfers in the longest) |
+| Diagnostics | `collect-diagnostics.cmd`: 11 files, no link keys |
+
+**Audio under load.** During the 5-minute call the user heard crackle, and in music stutter, whenever the desktop lagged (for example Chrome starting). That session logged voice pacing up to 73.6 ms late. Reproduced with a 40 s call and three 4 s bursts of 16 busy processes:
+
+| | v0.1.1 | v0.1.2 (MMCSS) |
+|---|---|---|
+| Worst pacing lateness | 111,661 µs | 1,811 µs |
+| Microphone samples delivered | 85% | 98% |
+| Heard | clear crackle and dropouts in the bursts | "much less, maybe one noticeable crackle … otherwise very consistent" |
+| Music with the same bursts | stuttered | no stutter |
 
 ## v0.1.1
 

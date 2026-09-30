@@ -1,6 +1,6 @@
 # Roadmap
 
-What DeckBtService does as of v0.1.1, what comes next, and how it differs from the stock Bluetooth driver. Test results are in [VERIFICATION.md](VERIFICATION.md).
+What DeckBtService does as of v0.1.2, what comes next, and how it differs from the stock Bluetooth driver. Test results are in [VERIFICATION.md](VERIFICATION.md).
 
 ## Done in v0.1.0
 
@@ -19,6 +19,10 @@ What DeckBtService does as of v0.1.1, what comes next, and how it differs from t
 
 - [x] Fixes from a static review ([CHANGELOG.md](../CHANGELOG.md)): a controller that never acknowledges the host in-band-sleep wake now fails the start instead of being reported ready; the voice pacing timer is required at start and a failed timer arm no longer spins; isochronous packets longer than the alternate setting's `wMaxPacketSize` are rejected; a refused import's bus ID is escaped in the log; the installer refuses, and the uninstaller leaves alone, a `DeckBtService` service that runs another program.
 - [x] Tests: a 13th suite runs the real controller backend against a simulated controller; new regressions for each fix.
+
+## Done in v0.1.2
+
+- [x] Audio under load: the pacing, USB/IP session and UART threads run in the MMCSS "Pro Audio" class. Opening apps made music stutter and calls crackle (voice pacing up to 112 ms late); now pacing stays within 2 ms and music did not stutter ([VERIFICATION.md](VERIFICATION.md#v012)).
 
 ## Next
 

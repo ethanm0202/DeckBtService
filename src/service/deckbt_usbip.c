@@ -42,6 +42,7 @@
 #include "usbip_device.h"
 #include "qca_backend.h"
 #include "handsfree.h"
+#include "mmcss.h"
 #include "../include/hci_stub.h"
 
 #pragma comment(lib, "ws2_32.lib")
@@ -438,8 +439,12 @@ PacingThread(LPVOID Parameter)
 {
     HANDLE timer = (HANDLE)Parameter;
     HANDLE waits[2];
+    HANDLE mmcss = MmcssEnter();
     int timerFailing = 0;
 
+    if (mmcss == NULL) {
+        Log("pacing: MMCSS registration failed (%lu); normal priority", GetLastError());
+    }
     waits[0] = g_Kick;
     waits[1] = timer;
     while (!g_Stop) {
@@ -472,6 +477,7 @@ PacingThread(LPVOID Parameter)
             }
         }
     }
+    MmcssLeave(mmcss);
     CloseHandle(timer);
     return 0;
 }
@@ -484,7 +490,11 @@ SessionThread(LPVOID Parameter)
     unsigned char *payload = (unsigned char *)malloc(1024u * 1024u + USBIP_MAX_ISO_PACKETS * USBIP_ISO_DESC_SIZE);
     unsigned long urbs = 0;
     const char *why = "connection closed";
+    HANDLE mmcss = MmcssEnter();
 
+    if (mmcss == NULL) {
+        Log("session: MMCSS registration failed (%lu); normal priority", GetLastError());
+    }
     if (payload == NULL) {
         why = "out of memory";
     }
@@ -527,6 +537,7 @@ SessionThread(LPVOID Parameter)
     shutdown(socket, SD_BOTH);
     closesocket(socket);
     free(payload);
+    MmcssLeave(mmcss);
     return 0;
 }
 
