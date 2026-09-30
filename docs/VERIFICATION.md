@@ -101,6 +101,8 @@ Measured on the test Deck on 2026-09-29 with the Shokz OpenMeet and the Razer Or
 | Heard | clear crackle and dropouts in the bursts | "much less, maybe one noticeable crackle … otherwise very consistent" |
 | Music with the same bursts | stuttered | no stutter |
 
+**The attested v0.1.3 build.** GitHub Actions built v0.1.3 (same source) on a `windows-2025` runner with Visual Studio 2026 (MSVC 14.51), where the host suites without firmware, the socket regressions and 60 s of fuzzing per target (1,697,869 and 888,032 inputs) passed. `gh attestation verify` on the downloaded zip showed SLSA v1 provenance from `build.yml` at `refs/tags/v0.1.3` on a GitHub-hosted runner; the programs inside the zip and the installed `deckbt-usbip.exe` verified too. Installed over v0.1.2 in 14 s with no restart. The same 40 s call with three load bursts: PASS, 100% of samples, worst pacing lateness 1,918 µs, no stalls or rejected transfers, heard as clean; 313 mouse reports in 10 s.
+
 ## v0.1.1
 
 v0.1.1 fixes the findings of a static review of v0.1.0 ([CHANGELOG.md](../CHANGELOG.md)). Each fix has a regression that fails on v0.1.0:
