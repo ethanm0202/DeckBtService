@@ -10,9 +10,15 @@ It is for the Steam Deck **OLED** only. The Steam Deck LCD has a different Bluet
 
 ## Install
 
-1. Download `DeckBtService-0.1.2.zip` from the [Releases](../../releases) page and extract it.
+1. Download `DeckBtService-0.1.3.zip` from the [Releases](../../releases) page and extract it.
 2. Double-click `install.cmd` and approve the administrator prompt.
 3. If it asks you to restart Windows, restart, then double-click `install.cmd` again. A first install needs one restart.
+
+Release zips are built by [GitHub Actions](.github/workflows/build.yml) from the tagged commit, and each has a signed build-provenance attestation. With the [GitHub CLI](https://cli.github.com/), check that a download was built there from this repository:
+
+```
+gh attestation verify DeckBtService-0.1.3.zip --repo ethanm0202/DeckBtService
+```
 
 [packaging/README-install.md](packaging/README-install.md) has the full steps, what the installer changes on your system, how to uninstall and how to report a problem. The same guide is in the zip.
 
@@ -20,7 +26,7 @@ It is for the Steam Deck **OLED** only. The Steam Deck LCD has a different Bluet
 
 ## Status
 
-Version 0.1.2 ([changes](CHANGELOG.md)). Tested on one Steam Deck OLED running Windows 11 25H2, with a Shokz OpenMeet headset and a Bluetooth mouse. Details and measurements: [docs/VERIFICATION.md](docs/VERIFICATION.md).
+Version 0.1.3 ([changes](CHANGELOG.md)). Tested on one Steam Deck OLED running Windows 11 25H2, with a Shokz OpenMeet headset and a Bluetooth mouse. Details and measurements: [docs/VERIFICATION.md](docs/VERIFICATION.md).
 
 What works:
 
@@ -43,7 +49,7 @@ Known limitations:
 - **Bluetooth depends on the service.** If the service restarts, Bluetooth disappears for a few seconds and devices reconnect. There is no fallback to the stock driver while it is installed.
 - **Windows sees a new adapter,** named Generic Bluetooth Adapter. Your headset's audio devices may appear as new ones, so an app that remembered a specific microphone or speaker may need it picked again.
 - **Two Windows crashes (blue screens)** were recorded while earlier builds were being tested. Both have mitigations in this release, but that is not proof they cannot happen again; see [docs/VERIFICATION.md](docs/VERIFICATION.md).
-- **The programs are not code-signed,** so Windows may warn about an unknown publisher when you run them.
+- **The programs are not code-signed,** so Windows may warn about an unknown publisher when you run them. Their origin can be checked with the build attestation above instead.
 
 A detailed comparison with the stock driver is in [docs/ROADMAP.md](docs/ROADMAP.md).
 

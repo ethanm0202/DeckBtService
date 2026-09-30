@@ -244,7 +244,7 @@ It exits 0 when installed and running, 3010 when Windows must restart first (the
 
 What the scripts trust and check:
 
-- **Release files.** `SHA256SUMS` detects a damaged or incomplete download. It ships in the same zip, so it does not prove who built the files; the binaries are not code-signed.
+- **Release files.** `SHA256SUMS` detects a damaged or incomplete download. It ships in the same zip, so it does not prove who built the files. The binaries are not code-signed. Since v0.1.3 the zip and both programs carry GitHub build-provenance attestations: `gh attestation verify` shows that the files were built by the project's workflow from a given commit.
 - **Copies.** The release folder may be writable by other users. The programs are staged inside the protected install folder and those copies are checked against the hashes read earlier; nothing from the release folder is executed after that check.
 - **usbip-win2.** The installer is downloaded over HTTPS from the project's GitHub release and must match a SHA-256 pinned in `install.ps1` before it runs. Its drivers carry Microsoft signatures.
 - **Folders.** The data folder is created or repaired with the service's permissions before anything is read from or written to it, and a junction there is refused.

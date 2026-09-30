@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.3 (2026-09-29)
+
+Same source code as 0.1.2; the programs are now compiled on GitHub's Windows runner (Visual Studio 2026, MSVC 14.51) instead of locally with the EWDK.
+
+**Verifiable builds.** Release zips are now built by GitHub Actions from the tagged commit, on a GitHub-hosted Windows runner, after the build, the host test suites (except the five that need Valve's firmware), the socket regressions and a fuzz run pass. The zip and both programs carry signed build-provenance attestations. Check a download with `gh attestation verify DeckBtService-0.1.3.zip --repo ethanm0202/DeckBtService`. Every push to `main` runs the same build and tests.
+
+Upgrading: extract the new zip and run its `install.cmd`; no restart is needed.
+
 ## 0.1.2 (2026-09-29)
 
 **Audio under load.** Opening an app or any other burst of CPU load made music on a Bluetooth headset stutter and calls crackle. The service's audio threads (voice pacing, the USB/IP session, the UART reader and writer) ran at normal priority, and the voice pacing was measured running up to 112 ms late. They now join Windows' Multimedia Class Scheduler (MMCSS) "Pro Audio" task, as Windows' own audio engine does. Under the same load, pacing stayed within 1.8 ms, the microphone delivered 98% of its audio instead of 85%, and music did not stutter. A thread that MMCSS refuses logs it and keeps running at normal priority.

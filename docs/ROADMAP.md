@@ -1,6 +1,6 @@
 # Roadmap
 
-What DeckBtService does as of v0.1.2, what comes next, and how it differs from the stock Bluetooth driver. Test results are in [VERIFICATION.md](VERIFICATION.md).
+What DeckBtService does as of v0.1.3, what comes next, and how it differs from the stock Bluetooth driver. Test results are in [VERIFICATION.md](VERIFICATION.md).
 
 ## Done in v0.1.0
 
@@ -24,6 +24,10 @@ What DeckBtService does as of v0.1.2, what comes next, and how it differs from t
 
 - [x] Audio under load: the pacing, USB/IP session and UART threads run in the MMCSS "Pro Audio" class. Opening apps made music stutter and calls crackle (voice pacing up to 112 ms late); now pacing stays within 2 ms and music did not stutter ([VERIFICATION.md](VERIFICATION.md#v012)).
 
+## Done in v0.1.3
+
+- [x] Release engineering: GitHub Actions builds and tests every push; release zips are built there from the tag and carry signed build-provenance attestations (`gh attestation verify`).
+
 ## Next
 
 - [ ] **Longer runs**: overnight sleep, calls that span a sleep, long calls, and long-run input quality. Connected devices are not proof of audio or input quality.
@@ -34,7 +38,7 @@ What DeckBtService does as of v0.1.2, what comes next, and how it differs from t
 - [ ] **Transport correctness under cancellation**: the bounded-replay limitations stay open. The unlink storms seen with usbip-win2 0.9.8.0 were its issue #190 resets; on 0.9.8.1 no unlinks were counted in the reconnect tests, which shows the trigger is gone, not that the remaining races are handled.
 - [ ] **Real controller faults**: the UART fault path is covered by isolated tests only. A real fault, such as the UART controller being reset by a driver update, has not been observed.
 - [ ] **Host in-band sleep**: the host never sends `SLEEP_IND`, so the controller sees it awake for the whole session ([QCA2066.md](QCA2066.md#in-band-sleep)). Measure the battery cost against the stock driver before changing it.
-- [ ] **Release engineering**: continuous integration for the host suites, socket regressions and a fuzz smoke run; code-signed binaries or signed releases. `SHA256SUMS` ships inside the same zip, so it detects damage, not tampering.
+- [ ] **Code signing**: the programs are not Authenticode-signed, so Windows warns about an unknown publisher. Since v0.1.3 their origin is shown by GitHub build-provenance attestations instead.
 
 ## Open questions
 

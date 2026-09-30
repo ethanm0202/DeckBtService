@@ -2,7 +2,7 @@
 
 ## Toolchain
 
-The scripts use the Enterprise WDK (EWDK), a self-contained build environment (MSVC and the Windows SDK) that needs no installation. Only its compiler and SDK are used; nothing here is a driver.
+The scripts use the Enterprise WDK (EWDK), a self-contained build environment (MSVC and the Windows SDK) that needs no installation. Only its compiler and SDK are used; nothing here is a driver. `tools\toolchain.cmd` sets it up for every script; a Visual Studio x64 developer environment that is already active (for example from `vcvars64.bat`) is used instead.
 
 1. Download the Windows 11 EWDK ISO (build 26100 or newer) from [Microsoft](https://learn.microsoft.com/en-us/windows-hardware/drivers/download-the-wdk).
 2. Extract it to `C:\EWDK`, or mount it and set `EWDK` to the mounted drive. The optional Python extractor runs without mounting or elevation:
@@ -39,7 +39,7 @@ tools\_build\test\deckbt-usbip.exe --version
 tools\package.cmd
 ```
 
-Builds in `tools\_build\package-release`, never the default output, and refuses to run unless the release inputs in `packaging/` are present. A clean build produces `dist\DeckBtService-<VERSION>.zip` with one top folder, `DeckBtService-<VERSION>\`; for v0.1.2 that is `DeckBtService-0.1.2.zip` and `DeckBtService-0.1.2\`. A dirty test build keeps the full build identity in both names. The folder contains:
+Builds in `tools\_build\package-release`, never the default output, and refuses to run unless the release inputs in `packaging/` are present. A clean build produces `dist\DeckBtService-<VERSION>.zip` with one top folder, `DeckBtService-<VERSION>\`; for v0.1.3 that is `DeckBtService-0.1.3.zip` and `DeckBtService-0.1.3\`. A dirty test build keeps the full build identity in both names. The folder contains:
 
 | File | Purpose |
 |---|---|
@@ -96,6 +96,12 @@ accepted isochronous packet exceeds its setting's `wMaxPacketSize`;
 under `tools\_build\fuzz`; a sanitizer report or failed invariant makes the command fail.
 These tests do not prove hardware voice quality or kernel-driver safety.
 
+
+### Continuous integration and release provenance
+
+[`.github/workflows/build.yml`](../.github/workflows/build.yml) runs `tools\ci.cmd` on a GitHub-hosted Windows runner for every push and pull request: the build, the host suites with `DECKBT_NO_FIRMWARE=1` (the five suites that need Valve's firmware are reported as skipped, since the firmware cannot be redistributed), the socket regressions and a 60 s fuzz run per target.
+
+A tag `vX.Y.Z` that matches `VERSION` runs the same and then `tools\package.cmd`. The zip and both programs get a signed [SLSA build-provenance attestation](https://docs.github.com/actions/security-for-github-actions/using-artifact-attestations) naming the workflow run and commit, and the zip is attached to the tag's release (a draft if none exists). The published zip is this CI build, not a local one. Check one with `gh attestation verify <file> --repo ethanm0202/DeckBtService`.
 
 ## Running it
 
