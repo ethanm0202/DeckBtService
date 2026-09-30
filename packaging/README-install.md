@@ -49,6 +49,12 @@ powershell -ExecutionPolicy Bypass -File .\uninstall.ps1 -RemoveUsbip -RemoveLog
 - `-RemoveLogs` also deletes the DeckBtService logs in `C:\ProgramData\DeckBtService`; other files there are kept.
 - `-DryRun` shows what it would do without changing anything. `install.ps1` accepts `-DryRun` too.
 
+## If Bluetooth stays unavailable
+
+One v0.1.3 controller failure required a Windows restart; service restart and sleep/wake did not recover it. The initiating cause is still unknown. The 0.1.4 candidate checks CTS before sending and stops automatic retries after three consecutive physical wake failures. Its service log then says `controller unresponsive: restart Windows to recover Bluetooth`.
+
+In that state the service can still show **Running**, but the Bluetooth adapter is unavailable. It remains responsive to Stop; manually restarting the service makes another bounded attempt. Save the diagnostics before restarting Windows if possible. These safeguards do not prove that the controller can never get stuck again.
+
 ## Reporting a problem
 
 Double-click **`collect-diagnostics.cmd`**. It saves `DeckBtService-diagnostics-<date>.zip` on your Desktop. Attach it to a new issue on the project's [Issues page](https://github.com/ethanm0202/DeckBtService/issues), with a short description of what happened.

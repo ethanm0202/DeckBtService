@@ -73,7 +73,8 @@ No elevation and no hardware. Each suite compiles production sources into a user
 | `sco_usb_selftest` | `sco_usb.c` | SCO pacing, OUT reassembly and resynchronisation, IN re-framing |
 | `sco_route_selftest` | `sco_route.c` | enhanced synchronous-connection rewrite and opcode restore |
 | `usbip_device_selftest` | `usbip_device.c` | event/ACL delivery in controller order across both endpoints, the 20 ms hold bound, a lost reply delivered again in order, isochronous descriptor checks (order, overlap, no packet above the setting's `wMaxPacketSize`) |
-| `qca_backend_selftest` | `qca_backend.c` (UART mocked) | `QcaBackendStart`/`QcaBackendStop` against a simulated controller with the real firmware: identify ladder, baud switch, download, host IBS wake acknowledged on the first or third `WAKE_IND` or never (start fails with `ERROR_TIMEOUT`, no writer, controller handed back to ROM at 115200), restart after a failed start |
+| `qca_backend_selftest` | `qca_backend.c` (UART mocked) | bring-up and host IBS wake; transient low CTS before data or ACK, ACK before queued data when flow control clears, Stop during the CTS wait, stopping on partial writes, persistent CTS failure, and restart after the fixture becomes responsive |
+| `lifecycle_selftest` | `deckbt_usbip.c` (controller start mocked) | three consecutive CTS failures pause recovery while the real loopback listener refuses imports; mixed startup errors, ordinary error exits, and explicit stop during recovery; no hardware or firmware required |
 
 It then runs `tools\check-reference.cmd`, which regenerates the stub's descriptors and HCI exchanges with `tools\refdump.c` and compares them with `reference\VIRTUAL-HCI-REFERENCE.txt`. A difference means the USB device changed; if intended, run `tools\refdump.cmd` and commit the new reference.
 

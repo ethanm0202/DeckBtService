@@ -48,7 +48,8 @@ set SUITES=^
  "sco_usb_selftest|tools\sco_usb_selftest.c src\common\sco_usb.c"^
  "sco_route_selftest|tools\sco_route_selftest.c src\common\sco_route.c"^
  "qca_backend_selftest|tools\qca_backend_selftest.c src\service\qca_backend.c src\common\h4_codec.c src\common\hci_bridge.c src\common\sco_route.c src\common\qca_identify.c src\common\qca_init_fsm.c src\common\qca_tlv.c"^
- "usbip_device_selftest|tools\usbip_device_selftest.c src\service\usbip_device.c src\common\sco_usb.c src\common\usb_descriptors.c"
+ "usbip_device_selftest|tools\usbip_device_selftest.c src\service\usbip_device.c src\common\sco_usb.c src\common\usb_descriptors.c"^
+ "lifecycle_selftest|tools\lifecycle_selftest.c src\service\usbip_device.c src\service\qca_backend.c src\service\uart_win32.c src\service\handsfree.c src\common\usb_descriptors.c src\common\sco_usb.c src\common\hci_stub.c src\common\h4_codec.c src\common\hci_bridge.c src\common\sco_route.c src\common\qca_identify.c src\common\qca_init_fsm.c src\common\qca_tlv.c"
 
 set /a FAILED=0
 for %%E in (%SUITES%) do (

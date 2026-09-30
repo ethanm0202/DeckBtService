@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.4 (2026-09-30)
+
+**UART fault handling.** Before a steady-state data packet or in-band-sleep acknowledgement, the writer checks CTS. If it is low, the writer waits passively for up to the 1,500 ms readiness deadline, without changing RTS or the UART's automatic flow control. A failed wait no longer discards a pending acknowledgement. Pending acknowledgements go before the next data packet, never inside one.
+
+A failed or partial write now ends the steady writer instead of sending the remaining queue into a possibly incomplete H4 packet. New submissions are refused after the fault. The log records the failed packet's type and length, the driver's completion count, and repeated wake indications while an acknowledgement is pending.
+
+**Unresponsive controller.** After three consecutive starts where physical wake fails and CTS is still low, automatic retries pause. The service logs `controller unresponsive: restart Windows to recover Bluetooth` and stays available for an explicit stop, rather than causing an endless Windows service-recovery loop. Other startup failures retain their normal retry policy.
+
+**Limits of this change.** One v0.1.3 session lost Bluetooth and needed a Windows restart. Its initiating cause is still unknown. These changes fix demonstrated writer defects; they are not proof that the hardware failure cannot recur. CTS can fall after a pre-write check, and no non-reboot recovery for the recorded wedge has been demonstrated.
+
+**Tests.** Backend regressions cover temporary low CTS before data or an acknowledgement, acknowledgement priority after flow control clears, stopping during the wait, partial writes, and a controller that never raises CTS. Three cases failed on the original backend and passed with the first fix. A stricter flow-control fixture then exposed eight failed assertions in that candidate's RTS-pulsing approach; all pass with passive waiting. A new lifecycle suite exercises bounded retries, a live but unavailable loopback server, ordinary startup errors, and stopping during recovery.
+
 ## 0.1.3 (2026-09-29)
 
 Same source code as 0.1.2; the programs are now compiled on GitHub's Windows runner (Visual Studio 2026, MSVC 14.51) instead of locally with the EWDK.

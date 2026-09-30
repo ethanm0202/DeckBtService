@@ -58,6 +58,7 @@
 #define BUS_NUM        1u
 #define DEV_NUM        2u
 #define START_RETRY_MS 3000u
+#define CTS_START_ATTEMPTS 3u   /* repeated physical wake failures cannot be fixed by an SCM loop */
 #define HANDSHAKE_MS   2000u
 #define MAX_HANDSHAKES 8u
 #define SESSION_CLOSE_MS 3000u   /* after FIN, how long the importer gets to close its end */
@@ -288,11 +289,12 @@ LogStats(const char *Why)
         const HCI_BRIDGE_COUNTERS *c = &g_Qca->Bridge.Counters;
 
         Log("uart (%s): rx %llu B tx %llu B, readErr %lu writeErr %lu txFull %lu, IBS wakeInd %lu sleepInd %lu "
-            "ack %lu ackCtsLow %lu; bridge cmd %lu/%lu held %lu evt %lu/%lu vendorDropped %lu aclOut %lu "
+            "ack %lu ackCtsLow %lu wakeAckGap %lu; bridge cmd %lu/%lu held %lu evt %lu/%lu vendorDropped %lu aclOut %lu "
             "aclIn %lu noCredit %lu (pool %u+%u LE, free %u) scoOut %lu scoIn %lu; shutdown disconnects %lu "
             "refused %lu, commands withheld %lu",
             Why, q->BytesRead, q->BytesWritten, q->ReadErrors, q->WriteErrors, q->TxQueueFull,
             q->IbsWakeIndRx, q->IbsSleepIndRx, q->IbsWakeAckTx, q->IbsAckCtsLow,
+            q->IbsWakeIndRx - q->IbsWakeAckTx,
             c->CommandsSentToWire, c->CommandsSubmitted, c->CommandsHeld, c->EventsQueued, c->EventsReceived,
             c->EventsSuppressedVendor, c->AclSentToWire, c->AclQueued, c->AclDroppedNoCredit,
             g_Qca->Bridge.TotalAclBuffers, g_Qca->Bridge.LeTotalAclBuffers, g_Qca->Bridge.AvailableAclCredits,
@@ -1013,6 +1015,7 @@ static DWORD
 RadioStartWithRetries(void)
 {
     DWORD error = ERROR_SUCCESS;
+    ULONG ctsFailures = 0;
 
     for (ULONG attempt = 1; attempt <= g_StartAttempts; attempt++) {
         if (WaitForSingleObject(g_StopEvent, 0) == WAIT_OBJECT_0) {
@@ -1029,6 +1032,10 @@ RadioStartWithRetries(void)
         }
         if (error == ERROR_SUCCESS) {
             return ERROR_SUCCESS;
+        }
+        ctsFailures = g_UseUart && g_Qca->CtsUnresponsive ? ctsFailures + 1 : 0;
+        if (ctsFailures >= CTS_START_ATTEMPTS) {
+            return ERROR_DEVICE_HARDWARE_ERROR;
         }
         if (attempt < g_StartAttempts &&
             WaitForSingleObject(g_StopEvent, START_RETRY_MS) == WAIT_OBJECT_0) {
@@ -1437,6 +1444,16 @@ Run(void (*Report)(DWORD State, DWORD WaitHintMs))
         if (error != ERROR_SUCCESS) {
             Log("radio: not restarted after resume/disconnect (Win32 %lu)", error);
         }
+    }
+    if (error == ERROR_DEVICE_HARDWARE_ERROR && g_UseUart && g_Qca->CtsUnresponsive) {
+        /*
+         * Stay controllable but unavailable. Exiting with an error would make SCM repeat this
+         * same failed wake/reset forever. Do not suppress ordinary boot or attach failures.
+         */
+        Log("controller unresponsive: restart Windows to recover Bluetooth; "
+            "CTS stayed low after %u start attempts; automatic retries paused", CTS_START_ATTEMPTS);
+        (void)WaitForSingleObject(g_StopEvent, INFINITE);
+        error = ERROR_SUCCESS;   /* an intentional stop, not a successful radio start */
     }
     Report(SERVICE_STOP_PENDING, 20000);
     (void)InterlockedCompareExchange64(&g_StopDeadline, (LONG64)GetTickCount64() + STOP_DEADLINE_MS, 0);

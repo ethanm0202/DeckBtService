@@ -103,23 +103,19 @@ Complete(UART_PORT *Port, OVERLAPPED *Overlapped, BOOL Started, ULONG TimeoutMs,
     return ERROR_SUCCESS;
 }
 
-/* Each IOCTL has its own OVERLAPPED: the reader, writer and control paths issue them concurrently. */
+/* Control requests are serialized; read and write retain their independent OVERLAPPEDs. */
 static DWORD
 Ioctl(UART_PORT *Port, DWORD Code, void *In, DWORD InLength, void *Out, DWORD OutLength)
 {
-    OVERLAPPED overlapped;
     DWORD transferred;
     DWORD error;
     BOOL started;
 
-    ZeroMemory(&overlapped, sizeof(overlapped));
-    overlapped.hEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
-    if (overlapped.hEvent == NULL) {
-        return GetLastError();
-    }
-    started = DeviceIoControl(Port->Handle, Code, In, InLength, Out, OutLength, NULL, &overlapped);
-    error = Complete(Port, &overlapped, started, UART_IOCTL_TIMEOUT_MS, &transferred);
-    CloseHandle(overlapped.hEvent);
+    EnterCriticalSection(&Port->IoctlLock);
+    (void)ResetEvent(Port->IoctlOverlapped.hEvent);
+    started = DeviceIoControl(Port->Handle, Code, In, InLength, Out, OutLength, NULL, &Port->IoctlOverlapped);
+    error = Complete(Port, &Port->IoctlOverlapped, started, UART_IOCTL_TIMEOUT_MS, &transferred);
+    LeaveCriticalSection(&Port->IoctlLock);
     return error;
 }
 
@@ -149,9 +145,12 @@ UartOpen(UART_PORT *Port, const WCHAR *Path)
         Port->Handle = NULL;
         return error;
     }
+    InitializeCriticalSection(&Port->IoctlLock);
     Port->ReadOverlapped.hEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
     Port->WriteOverlapped.hEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
-    if (Port->ReadOverlapped.hEvent == NULL || Port->WriteOverlapped.hEvent == NULL) {
+    Port->IoctlOverlapped.hEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
+    if (Port->ReadOverlapped.hEvent == NULL || Port->WriteOverlapped.hEvent == NULL ||
+        Port->IoctlOverlapped.hEvent == NULL) {
         DWORD error = GetLastError();
         UartClose(Port);
         return error;
@@ -165,12 +164,16 @@ UartClose(UART_PORT *Port)
     if (Port->Handle != NULL) {
         (void)CancelIoEx(Port->Handle, NULL);
         CloseHandle(Port->Handle);
+        DeleteCriticalSection(&Port->IoctlLock);
     }
     if (Port->ReadOverlapped.hEvent != NULL) {
         CloseHandle(Port->ReadOverlapped.hEvent);
     }
     if (Port->WriteOverlapped.hEvent != NULL) {
         CloseHandle(Port->WriteOverlapped.hEvent);
+    }
+    if (Port->IoctlOverlapped.hEvent != NULL) {
+        CloseHandle(Port->IoctlOverlapped.hEvent);
     }
     ZeroMemory(Port, sizeof(*Port));
 }
@@ -289,6 +292,7 @@ UartWrite(UART_PORT *Port, const void *Data, ULONG Length, ULONG TimeoutMs)
     (void)ResetEvent(Port->WriteOverlapped.hEvent);
     started = WriteFile(Port->Handle, Data, Length, NULL, &Port->WriteOverlapped);
     error = Complete(Port, &Port->WriteOverlapped, started, TimeoutMs, &written);
+    Port->WriteTransferred = written;
     if (error == ERROR_SUCCESS && written != Length) {
         error = ERROR_WRITE_FAULT;
     }

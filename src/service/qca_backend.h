@@ -97,12 +97,15 @@ typedef struct _QCA_BACKEND {
     ULONG             TxCount;
     volatile LONG     IbsAckPending;
     volatile LONG     IbsTxAwake;
+    volatile LONG     IbsAckRepeats;       /* repeated indications while an ACK is pending */
+    volatile LONG     IbsAckWarning;       /* reader logs outside the controller lock */
     HANDLE            IbsAckEvent;
 
     volatile LONG     Stop;               /* ends the reader (and the writer) */
     volatile LONG     WriterStop;         /* ends the writer only; the reader serves the hand-back */
     volatile LONG     Faulted;            /* reader/writer share one fault notification per start */
     volatile LONG     Stuck;              /* a worker did not stop: retain state until process exit */
+    BOOLEAN           CtsUnresponsive;    /* start's physical wake could not raise CTS */
 
     UCHAR            *Patch;
     ULONG             PatchSize;

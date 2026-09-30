@@ -1,6 +1,6 @@
 # Verification
 
-What was tested for DeckBtService as of v0.1.2, and the results. Everything below was measured on one Steam Deck OLED. The install, upgrade and uninstall results come from the v0.1.0 release package; the other device results come from the builds leading up to it. The full uninstall-and-reinstall run behind v0.1.2 is under [v0.1.2](#v012); the v0.1.1 fixes under [v0.1.1](#v011). Results measured with usbip-win2 0.9.8.0, before the move to 0.9.8.1, are marked as such.
+Results for DeckBtService on one Steam Deck OLED, with v0.1.4 verification and the v0.1.3 controller incident separated from earlier successful tests below. The install, upgrade and uninstall results come from the v0.1.0 release package; the other original device results come from the builds leading up to it. The full uninstall-and-reinstall run behind v0.1.2 is under [v0.1.2](#v012); the v0.1.1 fixes under [v0.1.1](#v011). Results measured with usbip-win2 0.9.8.0, before the move to 0.9.8.1, are marked as such.
 
 ## Test environment
 
@@ -29,7 +29,7 @@ The usbip-win2 defect below was traced with Windows' ETW providers for BTHPORT, 
 
 ### Host-side suites
 
-`tools\selftest.cmd` (see [BUILD.md](BUILD.md)) builds and runs 13 suites against the production sources, then compares the synthetic controller's descriptors and HCI exchanges with the reference record. All pass.
+`tools\selftest.cmd` (see [BUILD.md](BUILD.md)) builds and runs 14 suites against the production sources, then compares the synthetic controller's descriptors and HCI exchanges with the reference record. The suite results include the new backend and service-lifecycle cases below.
 
 | Suite | Covers |
 |---|---|
@@ -41,8 +41,9 @@ The usbip-win2 defect below was traced with Windows' ETW providers for BTHPORT, 
 | `h4_selftest` | H4 framing and removal of in-band sleep bytes |
 | `bridge_selftest` | HCI bridge: readiness, ACL credits, link and address tracking, RFCOMM detection in both directions, clean-disconnect sequence |
 | `sco_usb_selftest`, `sco_route_selftest` | voice framing and pacing; rewriting to the enhanced synchronous-connection commands |
-| `qca_backend_selftest` | the controller backend against a simulated controller behind a mocked UART: full bring-up, host in-band-sleep wake acknowledged on the first or third try or never (the start then fails and hands the controller back), restart after a failed start |
+| `qca_backend_selftest` | the controller backend against a simulated controller behind a mocked UART: full bring-up, host in-band-sleep wake acknowledged on the first or third try or never, transient low CTS before data or ACK, ACK-before-data when flow control clears, Stop during the CTS wait, partial-write termination without replay or later data, persistent CTS failure, and restart when the fixture becomes responsive |
 | `usbip_device_selftest` | device model: cross-endpoint ordering in both directions, the 20 ms hold, arrival order with both reads parked, a lost ACL packet delivered ahead of a later event, replay order after repeated cancellation, a fresh hold for each new blockage, isochronous descriptors out of order, overlapping or longer than the setting's `wMaxPacketSize` |
+| `lifecycle_selftest` | the real service lifecycle and TCP listener with only controller start replaced: three consecutive physical wake failures pause retries without exiting, imports refuse an unavailable radio, an intervening ordinary error resets the CTS sequence, ordinary failures retain their exit status, and Stop interrupts retries or the paused state |
 
 The service and the UART probe build with MSVC `/W4 /WX`.
 
@@ -61,7 +62,46 @@ The service and the UART probe build with MSVC `/W4 /WX`.
 
 ### Fuzzing
 
-`tools\fuzz.cmd` builds two libFuzzer targets with AddressSanitizer: the USB/IP device model (`fuzz_usbip_device.c`) and the controller side (`fuzz_controller.c`). Each run lasts 60 s per target. The last run before v0.1.1 executed 930,374 USB/IP and 126,087 controller inputs with no findings. Before v0.1.0: 1,040,357 and 154,179; earlier runs of 1.16–1.2 million and 0.23–0.34 million inputs were also clean after the fixes listed under [Other defects fixed](#other-defects-fixed).
+`tools\fuzz.cmd` builds two libFuzzer targets with AddressSanitizer: the USB/IP device model (`fuzz_usbip_device.c`) and the controller side (`fuzz_controller.c`). Each run lasts 60 s per target. The local 0.1.4 run executed 918,167 USB/IP and 111,009 controller inputs with no findings. Before v0.1.1: 930,374 and 126,087; before v0.1.0: 1,040,357 and 154,179. These targets exercise parsers and protocol models, not physical UART flow control.
+
+## v0.1.4
+
+**Offline regressions:** low CTS before a queued H4 command, low CTS with only an IBS acknowledgement pending, and a partial write followed by a second queued command were added before the first writer fix. They produced six failed assertions on the original backend, then passed with that fix. A stricter fixture then held CTS low independently of RTS and released it as receiver flow control; the first candidate produced eight failed assertions, including the ACK-priority case. All pass with passive CTS waiting, as does a new case that stops during the wait without sending queued data or reporting a fault. The mock enforces CTS for every byte, including IBS; it does not invent a bypass for a wake acknowledgement.
+
+The lifecycle test runs the actual listener and recovery loop without opening the UART or attaching a device. Three consecutive CTS-unresponsive starts leave it alive but refusing imports. An intervening ordinary error resets that sequence; ordinary failures still return their error. Stop works during the retry delay and after retries have paused.
+
+**Hardware gate failed on the first candidate.** The local `0.1.4+eaf26a1-dirty` build installed and attached successfully. A 15-second call captured 216,160 of 240,000 microphone samples (90%, -47.7 dBFS), and the HID tool counted 1,395 Bluetooth mouse reports. Despite those counters, the user reported new hard stops in mouse movement and an audible pop at the end of playback. This is a regression, not a hardware pass. The published 0.1.3 build was restored successfully; the remaining load, Off/On, sleep/wake and crash-recovery checks were not run on that candidate.
+
+That candidate session logged `maxLateUs 1577`, no UART read/write errors, no full TX queue, no rejected SCO URBs, no ACL-credit refusals, and `wakeInd 144 / ack 144 / ackCtsLow 0 / wakeAckGap 0`. Those counters did not explain or negate the observed stalls. The data-side CTS wake count and duration were not recorded.
+
+Two temporary instrumented calls measured the first candidate's existing CTS checks without changing its transport policy. The user reported clean audio in both and smooth mouse movement in the second, which captured 227,840 of 240,000 microphone samples and 1,479 mouse reports. Its 2,130 checks took 24.7 us on average and at most 244 us; none observed low CTS or pulsed RTS. These later clean calls do not explain the earlier failure, and input-report totals do not establish smoothness.
+
+A separate, non-transmitting probe found that this AMD UART rejects `SERIAL_EV_CTS` notification registration with Win32 error 50. The revised candidate therefore polls only while CTS is low, using the existing writer event for bounded waits. It never pulses RTS during steady-state transmission. This removes a demonstrated flow-control defect; it does not establish the cause of the earlier hardware anomaly.
+
+**Revised local candidate, 2026-09-30:** built without diagnostic tracing. The zip's SHA-256 is `a42789b10142e822a4003bccfb8741285fd432d9a351adc9dba22cfdbe2653b2`. Both programs built with `/W4 /WX`; all 14 host suites, the reference check, and all 8 real-server socket checks passed.
+
+| Check | Measured result |
+|---|---|
+| 15-second call with mouse movement | 239,680/240,000 microphone samples, -40.2 dBFS; 1,499 mouse reports; worst voice-pacing lateness 1.885 ms |
+| 40-second call with mouse movement and three CPU-load bursts | 639,840/640,000 samples, -50.3 dBFS; 2,047 mouse reports; worst lateness 2.633 ms |
+| Music and mouse during three CPU-load bursts | 1,046 mouse reports; user reported clean music and smooth movement |
+| Bluetooth Off/On | microphone present 2.5 s after On completed; 10-second call delivered 159,680/160,000 samples; 1,004 mouse reports |
+| Forced service termination | SCM recorded its five-second restart action; new process observed running in 6.6 s, microphone back in 21.5 s; subsequent 10-second call delivered 159,840/160,000 samples and 1,310 mouse reports |
+| Sleep/wake, one cycle | clean handback to ROM; controller ready 3.437 s after resume started it; subsequent 10-second call delivered 159,840/160,000 samples and 1,175 mouse reports |
+
+The user reported clean audio and smooth mouse movement for each completed call, including the end of playback. Each CPU-load burst launched 16 normal-priority workers, each busy for four seconds. The baseline and loaded-call sessions logged no UART errors, full TX queue, stalls, SCO rejections or ACL-credit refusals. Input counts support the record but do not substitute for the user's smoothness report.
+
+The first post-crash movement window produced no input and did not start a call; whether the mouse was being moved was unknown. The subsequent call/input check completed without another service restart. Only that completed check is counted above.
+
+## v0.1.3 controller failure
+
+After about 1 h 42 min of a session on 2026-09-29, one UART write ended short with Win32 error 29. Subsequent attempts found CTS low and could not wake/reset the controller. Service restarts, sleep/wake, attempting writes with software CTS handshaking disabled, and a UART device restart did not recover it. Restarting Windows did.
+
+Fortnite, Easy Anti-Cheat and a launcher power-plan change preceded the failure. Two short lobby retests after restarting Windows, one without and one with the launcher script, did not reproduce it. This establishes neither a causal link nor sustained gaming compatibility.
+
+The final counters were `wakeInd 9865`, `sleepInd 8659`, `ack 8660`, `ackCtsLow 0`, `writeErr 1`, `readErr 0`. The wake/ack difference of 1,205 is cumulative and repeated indications can coalesce into one pending acknowledgement. It does not prove that 1,205 independent handshakes went unanswered, or that they all occurred during the failed write.
+
+The initiating cause remains unknown. The candidate fixes demonstrated writer defects and reports a controller that cannot be woken; it does not establish prevention of this incident or a non-reboot recovery. A pre-write CTS check cannot prevent CTS falling partway through a packet.
 
 ## v0.1.2
 
@@ -427,7 +467,7 @@ These results were measured with the [VirtBthUsb](https://github.com/ethanm0202/
 - Hibernate and Fast Startup
 - Long calls
 - Narrowband voice (CVSD, alternate settings 1–5)
-- A real controller fault on the live UART (the fault path is covered by targeted tests only)
+- Prevention of the recorded live UART wedge, and a demonstrated recovery without restarting Windows
 - The installer upgrading an existing usbip-win2 0.9.8.0
 - Battery impact
-- Secure Boot on, Memory Integrity (HVCI) on, and games with kernel anti-cheat
+- Secure Boot on, Memory Integrity (HVCI) on, and sustained gameplay with kernel anti-cheat

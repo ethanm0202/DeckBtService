@@ -2,7 +2,7 @@
 
 Bluetooth headset microphones for Windows on the Steam Deck OLED.
 
-On the Steam Deck OLED, Windows' stock Bluetooth driver plays music through a Bluetooth headset but never offers its microphone. DeckBtService fixes that: once installed, the headset's microphone shows up in Windows as a normal recording device, for calls, voice chat and recording. It runs as a background Windows service; everything else about Bluetooth keeps working as before, with the same paired devices.
+On the Steam Deck OLED, Windows' stock Bluetooth driver plays music through a Bluetooth headset but never offers its microphone. DeckBtService makes the headset's microphone appear in Windows as a normal recording device, for calls, voice chat and recording. It runs as a background Windows service and keeps existing pairings. The reliability limits below still apply.
 
 It is for the Steam Deck **OLED** only. The Steam Deck LCD has a different Bluetooth radio, is not supported, and the installer refuses to run on it.
 
@@ -26,7 +26,7 @@ gh attestation verify DeckBtService-0.1.3.zip --repo ethanm0202/DeckBtService
 
 ## Status
 
-Version 0.1.3 ([changes](CHANGELOG.md)). Tested on one Steam Deck OLED running Windows 11 25H2, with a Shokz OpenMeet headset and a Bluetooth mouse. Details and measurements: [docs/VERIFICATION.md](docs/VERIFICATION.md).
+Published version: 0.1.3. The source includes 0.1.4 fault-handling changes ([changes](CHANGELOG.md)). The revised local candidate passed calls, music and mouse checks under CPU load, Bluetooth Off/On, sleep/wake, and service-crash recovery; its attested release build is pending. These changes are not a demonstrated cure for the controller failure below. Tested on one Steam Deck OLED running Windows 11 25H2, with a Shokz OpenMeet headset and a Bluetooth mouse. Details and measurements: [docs/VERIFICATION.md](docs/VERIFICATION.md).
 
 What works:
 
@@ -35,18 +35,19 @@ What works:
 - Music, finding nearby devices, and Bluetooth mice work, including a mouse during a call.
 - Bluetooth starts by itself at boot, about 8 seconds after Windows starts; the radio is ready about 3.5 seconds later.
 - After sleep, the headset's music and microphone come back by themselves, about 15 seconds after waking. The same happens after switching Bluetooth off and on in Settings.
-- If the service stops unexpectedly, Windows restarts it and Bluetooth returns.
+- After a deliberate service process crash, Windows restarted the service and devices reconnected. This does not establish recovery from every controller failure.
 - Running the installer again resumes an interrupted install or upgrades an existing one. The uninstaller puts the stock Bluetooth driver back; reinstalling afterwards needed no restart.
 
 Known limitations:
 
 - **Tested on one Deck.** Other units and other Windows builds have not been tried.
 - **Not yet tested:** overnight sleep, long calls, calls that span a sleep, and battery life compared with the stock driver.
-- **Not yet tested:** Memory Integrity (Core isolation), Secure Boot, and games with kernel anti-cheat. The test Deck had Memory Integrity and Secure Boot off.
+- **Not yet tested:** Memory Integrity (Core isolation), Secure Boot, and sustained gameplay with kernel anti-cheat. Two short Fortnite lobby retests passed, but a prior Bluetooth failure occurred near a Fortnite launch; no causal connection has been established.
 - **Other Bluetooth uses** such as pairing new devices, game controllers, several devices at once or file transfer have not been tested systematically.
 - **Older headsets** that only support narrowband call audio (no wideband) are supported in the code but untested.
 - **Heavy load can still cause a rare crackle in calls.** The service's audio threads use Windows' audio scheduler, so opening apps no longer stutters music; under deliberate full-CPU bursts a call still had one audible crackle in three bursts.
 - **Bluetooth depends on the service.** If the service restarts, Bluetooth disappears for a few seconds and devices reconnect. There is no fallback to the stock driver while it is installed.
+- **A controller failure required a Windows restart on v0.1.3.** The cause is still unknown. The unreleased writer changes have regression coverage, but have not established that this failure is prevented or recoverable without restarting Windows.
 - **Windows sees a new adapter,** named Generic Bluetooth Adapter. Your headset's audio devices may appear as new ones, so an app that remembered a specific microphone or speaker may need it picked again.
 - **Two Windows crashes (blue screens)** were recorded while earlier builds were being tested. Both have mitigations in this release, but that is not proof they cannot happen again; see [docs/VERIFICATION.md](docs/VERIFICATION.md).
 - **The programs are not code-signed,** so Windows may warn about an unknown publisher when you run them. Their origin can be checked with the build attestation above instead.

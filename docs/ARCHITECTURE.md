@@ -159,15 +159,17 @@ The controller's ACPI node (`\_SB.FUR4.QTBT`) defines only `_HID`, `_CID`, `_DDN
 3. **Bring-up.** 3,000,000 baud, rampatch, board ID, NVM, logging off, `HCI_Reset`. About 3.5 s from ROM.
 4. **Steady state.** Reads complete on the first byte; the host wakes the controller with an in-band sleep (IBS) `WAKE_IND` until it answers `WAKE_ACK`, at most 10 times 100 ms apart; without an acknowledgement the start fails and the controller is handed back. The HCI bridge then becomes ready. The host never sends `SLEEP_IND`, so its transmit side stays awake for the session ([QCA2066.md](QCA2066.md#in-band-sleep)).
 5. **Serve.** HCI traffic moves between the device and the UART in H4 framing (one packet-type byte before each HCI packet).
-6. **Hand back.** On stop, the controller is reset to ROM at 115200, so the stock driver can take it again.
+6. **Hand back.** On stop, attempt to reset the controller to ROM at 115200 and verify its answer. A failed reset is logged; this cannot guarantee recovery from an unresponsive controller.
 
 Threads:
 
 - **Reader**: one read always pending. It feeds the H4 decoder under the controller lock and, after releasing the lock, tells the device which streams became readable.
-- **Writer** (steady state): sends queued packets whole, and acknowledges controller `WAKE_IND` bytes between packets. Acknowledgements are never sent from the read path. While CTS is deasserted nothing is written, and the controller repeats an unanswered `WAKE_IND`.
+- **Writer** (steady state): checks CTS before packets and IBS acknowledgements. If CTS is low, it waits passively against a 1,500 ms deadline, with interruptible 1 ms waits between status queries; it does not change RTS or automatic flow control. Pending acknowledgements go before queued H4, never inside a packet. An expired wait leaves the acknowledgement pending and faults the session; intentional Stop cancels without a fault. Any failed write ends the writer without replaying a possibly transmitted prefix. Queue admission and the fault transition share the queue lock.
 - **Front-end calls** (`Submit*`) never block: packets are queued for the writer (32 slots).
 
 The reader and writer, like the service's pacing and USB/IP session threads, join the MMCSS "Pro Audio" task, as the Windows audio engine's threads do (`src/service/mmcss.h`). At normal priority an application starting delayed them by up to 112 ms, heard as crackle in calls and stutter in music. A thread that MMCSS refuses logs it and runs at normal priority.
+
+Control IOCTLs share a serialized, reusable event in `UART_PORT`; reads and writes keep independent overlapped operations. This avoids allocating a kernel event for each steady-state CTS check. The last driver-reported write completion count is diagnostic evidence, not proof of physical wire delivery.
 
 ## The HCI bridge
 
@@ -207,6 +209,8 @@ Two edits to HCI traffic, both following the stock driver or upstream Linux:
 **Process failure.** If the process dies without a stop, usbip-win2 loses the connection and unplugs the device. The service manager restarts the service after 5 s, then 15 s, then 60 s for every later failure; nonzero reported service exits also count as failures. The start sequence resets a controller left running firmware.
 
 **Controller faults.** In steady state the backend reports a failed UART link once per start: 20 consecutive failed reads, or any failed write (a partial write can leave the controller's H4 parser mid-packet). The service then restarts the radio as for a lost session, logged as `radio: stopping (controller fault: …)`. The report comes from a backend thread with no lock held and only signals the lifecycle thread.
+
+After three consecutive starts where physical wake fails and a modem-status query still reports CTS low, the service logs `controller unresponsive: restart Windows to recover Bluetooth` and pauses automatic retries. It stays running but refuses imports, so SCM does not repeatedly restart the same failed controller. Stop remains responsive; an explicit service restart makes a new bounded attempt. Ordinary startup errors retain the existing retry policy. This handles a known unrecoverable symptom honestly; the initiating cause of the recorded v0.1.3 failure remains unknown.
 
 **Bounded stop.** Every wait on the stop and suspend path has a deadline. `usbip.exe port` and `detach` get 3 s and `attach` gets 60 s, plus 1 s to end the process. The session drain gets 3 s, then 2 s more after its read is cancelled (on Windows, `shutdown()` does not wake a blocked `recv`). A pending `attach` is cancelled when a stop, preshutdown or suspend arrives, so none of them waits out its deadline. A watchdog bounds each whole radio stop and the whole suspend callback, including waiting for a bring-up in progress, to 45 s. If a thread cannot be joined in time (the session thread, or a UART reader or writer the backend marks `Stuck`), nothing is freed under it: the service logs one `fatal:` line and ends its process, and the service manager's recovery takes over.
 

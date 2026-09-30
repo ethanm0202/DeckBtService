@@ -40,10 +40,14 @@ static const char *const g_NvmNames[QCA_BACKEND_NVM_FILES] = {
 static void
 ReportFault(QCA_BACKEND *B, const char *Why, DWORD Error)
 {
+    /* Linearize the fault with queue admission, then notify with neither lock held. */
+    EnterCriticalSection(&B->TxLock);
     if (B->Phase != 2 || B->Stop || B->WriterStop ||
         InterlockedCompareExchange(&B->Faulted, 1, 0) != 0) {
+        LeaveCriticalSection(&B->TxLock);
         return;
     }
+    LeaveCriticalSection(&B->TxLock);
     LOG(B, "%s (Win32 %lu)", Why, Error);
     if (B->OnFault != NULL && B->Phase == 2 && !B->Stop && !B->WriterStop) {
         B->OnFault(B->FaultContext, Why);
@@ -190,7 +194,10 @@ OnIbsByte(void *Context, unsigned char Byte)
     case QCA_IBS_WAKE_IND:
         /* Acknowledged by the writer between packets, never from the read path. */
         B->Stats.IbsWakeIndRx++;
-        InterlockedExchange(&B->IbsAckPending, 1);
+        if (InterlockedExchange(&B->IbsAckPending, 1) != 0 &&
+            InterlockedIncrement(&B->IbsAckRepeats) == 10) {
+            InterlockedExchange(&B->IbsAckWarning, 1);
+        }
         (void)SetEvent(B->TxEvent);
         return 1;
     case QCA_IBS_SLEEP_IND:
@@ -339,6 +346,9 @@ ReaderThread(LPVOID Parameter)
             mask = B->PendingNotifyMask;
             B->PendingNotifyMask = 0;
             LeaveCriticalSection(B->Lock);
+            if (InterlockedExchange(&B->IbsAckWarning, 0) != 0) {
+                LOG(B, "IBS: controller repeated WAKE_IND 10 times while an acknowledgement was pending");
+            }
             for (ULONG s = 0; s < (ULONG)HciStreamMax; s++) {
                 if (mask & (1ul << s)) {
                     HciTransportNotify(B->Transport, (HCI_STREAM)s);
@@ -396,10 +406,11 @@ Enqueue(QCA_BACKEND *B, UCHAR Type, const unsigned char *Packet, unsigned long L
 {
     unsigned char ok = 0;
 
-    if (B->Phase != 2 || Length == 0) {
+    EnterCriticalSection(&B->TxLock);
+    if (B->Phase != 2 || B->Faulted || B->WriterStop || B->Stop || Length == 0) {
+        LeaveCriticalSection(&B->TxLock);
         return 0;
     }
-    EnterCriticalSection(&B->TxLock);
     if (B->TxCount < QCA_BACKEND_TX_SLOTS) {
         QCA_BACKEND_TX_SLOT *slot = &B->Tx[(B->TxHead + B->TxCount) % QCA_BACKEND_TX_SLOTS];
 
@@ -438,29 +449,74 @@ WireSendSco(void *Context, const unsigned char *Packet, unsigned long Length)
 
 static const HCI_BRIDGE_WIRE_OPS g_WireOps = { WireSendCommand, WireSendAcl, WireSendSco };
 
-/*
- * Answers a pending WAKE_IND. With CTS deasserted nothing is written; the
- * controller repeats an unanswered WAKE_IND.
- */
+/* CTS gates TX; RTS gates RX. Do not pulse RTS for ordinary TX flow control.
+ * This AMD UART rejects SERIAL_EV_CTS notifications, so poll only while CTS is low. */
+static DWORD
+WaitForCts(QCA_BACKEND *B, BOOL *WasLow)
+{
+    ULONGLONG deadline = 0;
+
+    if (WasLow != NULL) {
+        *WasLow = FALSE;
+    }
+    for (;;) {
+        ULONG status;
+        DWORD error;
+        ULONGLONG now;
+
+        if (B->Stop || B->WriterStop || B->Faulted) {
+            return ERROR_OPERATION_ABORTED;
+        }
+        error = UartGetModemStatus(&B->Port, &status);
+        if (error != ERROR_SUCCESS) {
+            return error;
+        }
+        if (status & 0x10ul) {   /* SERIAL_CTS_STATE */
+            return ERROR_SUCCESS;
+        }
+        now = GetTickCount64();
+        if (deadline == 0) {
+            deadline = now + WRITE_TIMEOUT_MS;
+            if (WasLow != NULL) {
+                *WasLow = TRUE;
+            }
+        } else if (now >= deadline) {
+            return ERROR_NOT_READY;
+        }
+        (void)WaitForSingleObject(B->TxEvent, 1);   /* stop wakes the writer immediately */
+    }
+}
+
+/* Only at packet boundaries. A failed CTS wait must not consume the pending ACK. */
 static DWORD
 ServiceIbs(QCA_BACKEND *B)
 {
     static const UCHAR wakeAck[] = { QCA_IBS_WAKE_ACK };
-    ULONG modem = 0;
+    BOOL ctsWasLow;
     DWORD error;
 
-    if (InterlockedExchange(&B->IbsAckPending, 0) == 0) {
+    if (!B->IbsAckPending) {
         return ERROR_SUCCESS;
     }
-    if (UartGetModemStatus(&B->Port, &modem) == ERROR_SUCCESS && !(modem & 0x10ul /* SERIAL_CTS_STATE */)) {
+    error = WaitForCts(B, &ctsWasLow);
+    if (ctsWasLow) {
         B->Stats.IbsAckCtsLow++;
-        return ERROR_SUCCESS;
     }
+    if (error != ERROR_SUCCESS) {
+        return error;
+    }
+    if (B->Stop || B->WriterStop || B->Faulted) {
+        return ERROR_OPERATION_ABORTED;
+    }
+    /* A new indication during the write must leave another ACK pending. */
+    InterlockedExchange(&B->IbsAckPending, 0);
     error = UartWrite(&B->Port, wakeAck, sizeof(wakeAck), WRITE_TIMEOUT_MS);
     if (error == ERROR_SUCCESS) {
         B->Stats.IbsWakeAckTx++;
         B->Stats.BytesWritten++;
+        InterlockedExchange(&B->IbsAckRepeats, 0);
     } else {
+        InterlockedExchange(&B->IbsAckPending, 1);
         B->Stats.WriteErrors++;
     }
     return error;
@@ -477,14 +533,15 @@ WriterThread(LPVOID Parameter)
     if (mmcss == NULL) {
         LOG(B, "uart writer: MMCSS registration failed (%lu); normal priority", GetLastError());
     }
-    while (!B->Stop && !B->WriterStop) {
+    while (!B->Stop && !B->WriterStop && !B->Faulted) {
         (void)WaitForSingleObject(B->TxEvent, 1000);
-        for (;;) {
+        while (!B->Stop && !B->WriterStop && !B->Faulted) {
             ULONG length = 0;
             DWORD error = ServiceIbs(B);   /* between packets, never inside one */
 
             if (error != ERROR_SUCCESS) {
-                ReportFault(B, "UART write failed", error);
+                ReportFault(B, "UART IBS acknowledgement failed", error);
+                goto finished;
             }
             EnterCriticalSection(&B->TxLock);
             if (B->TxCount != 0) {
@@ -495,7 +552,19 @@ WriterThread(LPVOID Parameter)
                 B->TxCount--;
             }
             LeaveCriticalSection(&B->TxLock);
-            if (length == 0 || B->Stop) {
+            if (length == 0 || B->Stop || B->WriterStop || B->Faulted) {
+                break;
+            }
+            error = WaitForCts(B, NULL);
+            if (error == ERROR_SUCCESS) {
+                /* A wake indication may have arrived while TX was blocked. ACK it first. */
+                error = ServiceIbs(B);
+            }
+            if (error != ERROR_SUCCESS) {
+                ReportFault(B, "UART CTS wait before data failed", error);
+                goto finished;
+            }
+            if (B->Stop || B->WriterStop || B->Faulted) {
                 break;
             }
             error = UartWrite(&B->Port, packet, length, SEND_TIMEOUT_MS);
@@ -503,10 +572,14 @@ WriterThread(LPVOID Parameter)
                 B->Stats.BytesWritten += length;
             } else {
                 B->Stats.WriteErrors++;
+                LOG(B, "UART failed packet: H4 0x%02X, %lu bytes, driver completed %lu; not replaying",
+                    packet[0], length, B->Port.WriteTransferred);
                 ReportFault(B, "UART write failed", error);
+                goto finished;   /* a prefix may be on the wire; no replay or later packet */
             }
         }
     }
+finished:
     MmcssLeave(mmcss);
     return 0;
 }
@@ -620,6 +693,7 @@ static DWORD
 EnsureRom(QCA_BACKEND *B)
 {
     ULONG baud = ProbeRate(B);
+    DWORD error;
 
     B->Stats.EntryBaud = baud;
     if (baud == INIT_BAUD) {
@@ -628,8 +702,12 @@ EnsureRom(QCA_BACKEND *B)
     B->Stats.EntryReset = 1;
     LOG(B, "ensure-rom: controller %s; resetting at %lu", baud ? "running firmware" : "silent",
         baud ? baud : OPER_BAUD);
-    if (ResetSoc(B, baud != 0 ? baud : OPER_BAUD) != ERROR_SUCCESS) {
-        return ERROR_NOT_READY;
+    error = ResetSoc(B, baud != 0 ? baud : OPER_BAUD);
+    if (error != ERROR_SUCCESS) {
+        ULONG modem;
+        B->CtsUnresponsive = error == ERROR_NOT_READY &&
+            UartGetModemStatus(&B->Port, &modem) == ERROR_SUCCESS && !(modem & 0x10ul);
+        return error;
     }
     return ProbeRate(B) == INIT_BAUD ? ERROR_SUCCESS : ERROR_NOT_READY;
 }

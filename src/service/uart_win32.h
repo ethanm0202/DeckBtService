@@ -16,6 +16,9 @@ typedef struct _UART_PORT {
     HANDLE     Handle;
     OVERLAPPED ReadOverlapped;
     OVERLAPPED WriteOverlapped;
+    OVERLAPPED IoctlOverlapped;
+    CRITICAL_SECTION IoctlLock;  /* control requests share one event, not one allocation per packet */
+    DWORD      WriteTransferred; /* last write completion count, not a guarantee of wire delivery */
 } UART_PORT;
 
 /*
@@ -41,7 +44,8 @@ DWORD UartSetTimeouts(UART_PORT *Port, ULONG ReadInterval, ULONG ReadTotalMultip
 DWORD UartGetModemStatus(UART_PORT *Port, ULONG *Status);
 DWORD UartPurge(UART_PORT *Port);
 
-/* The CTS wake handshake: RTS pulses until the controller asserts CTS.
+/* Quiesced startup/recovery only: RTS pulses until the controller asserts CTS.
+ * Never use during steady RX: CTS can be low for TX flow control, while RTS controls RX.
  * *CtsBefore reports whether CTS was already asserted. ERROR_NOT_READY if it never asserts. */
 DWORD UartWakeController(UART_PORT *Port, BOOL *CtsBefore, ULONG *Pulses);
 
