@@ -4,7 +4,7 @@ DeckBtService is a user-mode program that presents the Steam Deck OLED's Bluetoo
 
 ## Why a virtual USB device
 
-The stock stack (`qcbtuart.sys` on `ACPI\QCOM2066`, then the BthX miniport `BthMini.sys`) expects synchronous voice (SCO/eSCO) to leave the HCI transport through a hardware path ("HCI bypass", also called offload), where audio goes from the controller to an audio device without passing through Windows. The Deck has no such path. `BthMini.sys` fails any other SCO mode with `STATUS_DEVICE_CONFIGURATION_ERROR` (`0xC0000182`), so Hands-Free devices enumerate in offload mode (`_HCIBYPASS_`) and headset microphones do not work. Music (A2DP) is unaffected because it travels as ordinary data.
+The stock stack (`qcbtuart.sys` on `ACPI\QCOM2066`, then the BthX miniport `BthMini.sys`) expects synchronous voice (SCO/eSCO) to leave the HCI transport through a hardware path ("HCI bypass", also called offload), where audio goes from the controller to an audio device without passing through Windows. Whether the Deck's hardware provides such a path has not been established; in Windows it gives no working microphone. `BthMini.sys` fails any other SCO mode with `STATUS_DEVICE_CONFIGURATION_ERROR` (`0xC0000182`), so Hands-Free devices enumerate in offload mode (`_HCIBYPASS_`) and headset microphones do not work. Music (A2DP) is unaffected because it travels as ordinary data.
 
 `BTHUSB.SYS`, the transport for USB Bluetooth adapters, carries voice in-band over isochronous endpoints. Through it, Hands-Free devices enumerate as ordinary `{0000111E-...}` devices with `BthHFEnum`/`BthHFAud`, and the headset microphone is a normal recording device. `BTHUSB.SYS` binds only to USB devices, so the controller has to appear as one.
 

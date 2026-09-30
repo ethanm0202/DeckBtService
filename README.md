@@ -57,7 +57,7 @@ A detailed comparison with the stock driver is in [docs/ROADMAP.md](docs/ROADMAP
 
 ## How it works
 
-The Deck OLED's Bluetooth chip (a Qualcomm QCA2066) is wired to a serial port inside the Deck, not to USB. Windows' driver for that kind of Bluetooth connection only handles call audio through a dedicated audio path that the Deck doesn't have, so the microphone never appears. Windows' driver for USB Bluetooth adapters handles call audio itself, but it only works with USB devices.
+The Deck OLED's Bluetooth chip (a Qualcomm QCA2066) is wired to a serial port inside the Deck, not to USB. Windows' driver for that kind of Bluetooth connection only handles call audio through a hardware "offload" route, where voice is meant to bypass Windows and go straight to audio hardware. On the Deck OLED that route gives no working microphone, so the headset's microphone never appears. Windows' driver for USB Bluetooth adapters handles call audio itself, but it only works with USB devices.
 
 DeckBtService bridges the two. It takes over the serial port, starts the Bluetooth chip with the firmware that Valve's driver already installed on your Deck, and presents the chip to Windows as a USB Bluetooth adapter. The virtual USB connection is provided by [usbip-win2](https://github.com/vadimgrn/usbip-win2), an open-source project with a Microsoft-signed driver. Windows then runs the adapter with its own built-in USB Bluetooth drivers, unmodified. DeckBtService has no kernel driver of its own and does not need Windows test mode.
 
