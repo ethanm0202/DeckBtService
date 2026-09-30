@@ -1,24 +1,11 @@
 @echo off
-rem Build DeckBtService with the extracted EWDK toolchain. No elevation needed to build.
+rem Build DeckBtService with the EWDK or an active Visual Studio environment (tools\toolchain.cmd). No elevation needed to build.
 rem Output: tools\_build\deckbt-usbip.exe (USB/IP server) and tools\_build\deckbt-uartprobe.exe
 rem (user-mode UART identify probe). Set DECKBT_BUILD_OUT to build elsewhere, e.g. while the
 rem service runs (and locks) the default output.
 setlocal EnableDelayedExpansion
 
-if not defined EWDK set "EWDK=C:\EWDK"
-set "MSVC_ROOT=%EWDK%\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC"
-set "SDK=%EWDK%\Program Files\Windows Kits\10"
-set "SDKVER=10.0.26100.0"
-
-for /d %%d in ("%MSVC_ROOT%\*") do set "MSVC=%%d"
-if not defined MSVC (
-  echo ERROR: no MSVC toolset under "%MSVC_ROOT%"
-  exit /b 1
-)
-
-set "PATH=%MSVC%\bin\Hostx64\x64;%SDK%\bin\%SDKVER%\x64;%PATH%"
-set "INCLUDE=%MSVC%\include;%SDK%\Include\%SDKVER%\ucrt;%SDK%\Include\%SDKVER%\shared;%SDK%\Include\%SDKVER%\um;%SDK%\Include\%SDKVER%\winrt"
-set "LIB=%MSVC%\lib\x64;%SDK%\Lib\%SDKVER%\ucrt\x64;%SDK%\Lib\%SDKVER%\um\x64"
+call "%~dp0toolchain.cmd" || exit /b 1
 
 set "HERE=%~dp0"
 set "ROOT=%HERE%..\"
