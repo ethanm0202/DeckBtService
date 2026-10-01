@@ -11,14 +11,14 @@ It is for the Steam Deck **OLED** only. The Steam Deck LCD has a different Bluet
 
 ## Install
 
-1. Download `DeckBtService-0.1.4.zip` from the [Releases](../../releases) page and extract it.
+1. Download `DeckBtService-0.1.5.zip` from the [Releases](../../releases) page and extract it.
 2. Double-click `install.cmd` and approve the administrator prompt.
 3. If it asks you to restart Windows, restart, then double-click `install.cmd` again. A first install needs one restart.
 
 Release zips are built by [GitHub Actions](.github/workflows/build.yml) from the tagged commit, and each has a signed build-provenance attestation. With the [GitHub CLI](https://cli.github.com/), check that a download was built there from this repository:
 
 ```
-gh attestation verify DeckBtService-0.1.4.zip --repo ethanm0202/DeckBtService
+gh attestation verify DeckBtService-0.1.5.zip --repo ethanm0202/DeckBtService
 ```
 
 [packaging/README-install.md](packaging/README-install.md) has the full steps, what the installer changes on your system, how to uninstall and how to report a problem. The same guide is in the zip.
@@ -27,7 +27,7 @@ gh attestation verify DeckBtService-0.1.4.zip --repo ethanm0202/DeckBtService
 
 ## Status
 
-Published version: 0.1.4. Tested on one Steam Deck OLED running Windows 11 25H2, with a Shokz OpenMeet headset and a Bluetooth mouse. The attested release build passed calls, music and mouse checks under CPU load, Bluetooth Off/On, sleep/wake, and service-crash recovery. These changes are not a demonstrated cure for the controller failure below. Details and measurements: [docs/VERIFICATION.md](docs/VERIFICATION.md).
+Published version: 0.1.5 ([changes](CHANGELOG.md)). Tested on one Steam Deck OLED running Windows 11 25H2, with a Shokz OpenMeet headset and a Bluetooth mouse. The attested v0.1.4 build passed calls, music and mouse checks under CPU load, Bluetooth Off/On, sleep/wake, and service-crash recovery. None of this is a demonstrated cure for the controller failure below. Details and measurements: [docs/VERIFICATION.md](docs/VERIFICATION.md).
 
 What works:
 

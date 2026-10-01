@@ -1,6 +1,6 @@
 # Roadmap
 
-What DeckBtService does as of v0.1.4, what comes next, and how it differs from the stock Bluetooth driver. Test results are in [VERIFICATION.md](VERIFICATION.md).
+What DeckBtService does as of v0.1.5, what comes next, and how it differs from the stock Bluetooth driver. Test results are in [VERIFICATION.md](VERIFICATION.md).
 
 ## Done in v0.1.0
 
@@ -31,6 +31,10 @@ What DeckBtService does as of v0.1.4, what comes next, and how it differs from t
 ## Done in v0.1.4
 
 - [x] UART flow control and fault handling: passive bounded wait on CTS before steady-state packets and in-band-sleep acknowledgements; pending acknowledgements are prioritized and preserved across failures; partial writes terminate the writer without replaying into broken framing; bounded startup retries pause on persistent CTS failure ([CHANGELOG.md](../CHANGELOG.md)).
+
+## Done in v0.1.5
+
+- [x] HCI bridge and service fixes ([CHANGELOG.md](../CHANGELOG.md)): vendor command completions matched to the host command by opcode; queued voice packets flushed at the end of a call, removed per connection on disconnect, and retried when a transmit slot frees; service command lines quoted by Windows rules, sized exactly and read as Unicode.
 
 ## Next
 

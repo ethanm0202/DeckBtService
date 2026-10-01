@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.5 (2026-09-30)
+
+**Command accounting.** A vendor-specific command completion (OGF 0x3F) reaches Windows and retires a host command only if Windows sent a vendor command with that exact opcode. Anything else is treated as late bring-up chatter and dropped without touching the count of host commands in flight, so it can neither complete the wrong command nor let a clean shutdown send its disconnects while a real host command is still outstanding.
+
+**Call audio queues.** Queued voice (SCO) packets are flushed when a voice stream ends, so a packet held back by a full transmit queue cannot be sent into the next call. A disconnect removes only that connection's queued voice packets. When the UART writer frees a transmit slot, it retries voice packets that were waiting for one.
+
+**Service registration and paths.** `deckbt-usbip install` quotes and escapes each option by Windows command-line rules, so a quoted path ending in `\` no longer swallows the options after it. The service command line is sized exactly and refused, rather than silently truncated, if it exceeds Windows' 32,767-character limit. Both programs now read their command line as Unicode, so paths with characters outside the system code page reach Windows intact. The default install uses none of these options.
+
+**Tests.** New bridge regressions cover a late vendor completion arriving while a different host vendor command is pending, a stale voice packet across a call boundary, and a disconnect with voice packets queued for two connections. The lifecycle suite round-trips service command lines through Windows' own parser, including trailing backslashes, embedded quotes, Unicode paths and the length limit.
+
+Upgrading: extract the new zip and run its `install.cmd`; no restart is needed.
+
 ## 0.1.4 (2026-09-30)
 
 **UART fault handling.** Before a steady-state data packet or in-band-sleep acknowledgement, the writer checks CTS. If it is low, the writer waits passively for up to the 1,500 ms readiness deadline, without changing RTS or the UART's automatic flow control. A failed wait no longer discards a pending acknowledgement. Pending acknowledgements go before the next data packet, never inside one.
@@ -7,10 +19,6 @@
 A failed or partial write now ends the steady writer instead of sending the remaining queue into a possibly incomplete H4 packet. New submissions are refused after the fault. The log records the failed packet's type and length, the driver's completion count, and repeated wake indications while an acknowledgement is pending.
 
 **Unresponsive controller.** After three consecutive starts where physical wake fails and CTS is still low, automatic retries pause. The service logs `controller unresponsive: restart Windows to recover Bluetooth` and stays available for an explicit stop, rather than causing an endless Windows service-recovery loop. Other startup failures retain their normal retry policy.
-
-**HCI bridge & SCO stream hygiene.** A vendor-specific command completion (OGF 0x3F) reaches the host and retires a host command only if the host sent a vendor command with that exact opcode; otherwise it is treated as late bring-up chatter and dropped without touching `HostCommandsPending`, so it can neither complete the wrong command nor release a shutdown disconnect while a real host command is in flight. Outbound and inbound SCO FIFOs are flushed when a voice stream ends, including through the production QCA transport. A disconnect removes only that handle's queued SCO packets. When the UART writer frees a transmit slot it retries SCO packets that were waiting for one.
-
-**Service registration & Unicode CLI.** Switched the service and UART probe entry points to native `wmain` and wide-character argument parsing, eliminating ANSI code-page (`CP_ACP`) path mangling for paths containing non-ASCII characters. Service registration (`deckbt-usbip install`) now pre-computes exact required argument lengths, quotes and escapes per Microsoft CRT rules (doubling trailing backslashes and backslashes before quotes), bounds-checks against the 32,767-character Windows SCM limit, and fails explicitly rather than silently truncating configuration lines.
 
 **Limits of this change.** One v0.1.3 session lost Bluetooth and needed a Windows restart. Its initiating cause is still unknown. These changes fix demonstrated writer defects; they are not proof that the hardware failure cannot recur. CTS can fall after a pre-write check, and no non-reboot recovery for the recorded wedge has been demonstrated.
 
