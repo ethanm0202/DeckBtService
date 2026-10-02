@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.6 (2026-10-01)
+
+**Port reset.** A USB port reset (usbip-win2's forwarding of Windows' device reset, the same request Linux's stub answers with `usb_reset_device`) no longer empties the HCI bridge: a real dongle keeps its state across a port reset, and Windows keeps BTHPORT state and re-drives pending transfers. An acknowledged command still reaches the controller and its completion still reaches Windows; queued controller events, the vendor-completion match, the ACL credit pools and the reply-replay history survive the reset. Only the ordering hold and the voice stream restart. Previously the reset dropped queued events (including command completions Windows was waiting for), cleared the vendor match list, refilled in-flight credits and wiped the reply history.
+
+**ACL credit pools.** BR/EDR and LE ACL flow control are separate pools, as the spec requires when the controller reports LE buffers (7 + 16 here); a Classic link can no longer borrow LE buffers and an LE link no longer draws on the shared pool. Both pools refill on `HCI_Reset`.
+
+**Unlink integrity.** Writes, control requests and voice transfers whose answers crossed a cancellation are counted (`UnlinksAnswered`). An unlink for an event or ACL reply that aged out of the reply history ends the session for a clean radio restart instead of continuing with a hole Windows cannot recover.
+
+**Tests.** New and rewritten bridge regressions cover separate BR/EDR and LE pools (refusal across pools, per-pool completion and disconnect crediting, both pools refilled by `HCI_Reset`). New device regressions cover a port reset that must not reset the transport, queued events surviving it, replay surviving it, benign unlink crossings counted, and an aged-out reply ending the session.
+
+Upgrading: extract the new zip and run its `install.cmd`; no restart is needed.
+
 ## 0.1.5 (2026-09-30)
 
 **Command accounting.** A vendor-specific command completion (OGF 0x3F) reaches Windows and retires a host command only if Windows sent a vendor command with that exact opcode. Anything else is treated as late bring-up chatter and dropped without touching the count of host commands in flight, so it can neither complete the wrong command nor let a clean shutdown send its disconnects while a real host command is still outstanding.

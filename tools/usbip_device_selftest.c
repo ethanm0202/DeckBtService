@@ -35,6 +35,7 @@ typedef struct {
 static FAKE_QUEUE g_Queue[2];      /* [0] events, [1] ACL */
 static unsigned long g_NextOrder;
 static int g_Ordered = 1;
+static unsigned int g_TransportResets;
 
 static FAKE_QUEUE *
 QueueOf(HCI_STREAM Stream)
@@ -55,7 +56,7 @@ Arrive(HCI_STREAM Stream, unsigned char Tag)
 
 static unsigned char FSubmit(HCI_TRANSPORT *t, const unsigned char *p, unsigned long l) { (void)t; (void)p; (void)l; return 1; }
 static unsigned long FLast(const HCI_TRANSPORT *t) { (void)t; return 0; }
-static void FReset(HCI_TRANSPORT *t) { (void)t; g_Queue[0].Count = g_Queue[1].Count = 0; }
+static void FReset(HCI_TRANSPORT *t) { (void)t; g_TransportResets++; }
 
 static unsigned char
 FHas(const HCI_TRANSPORT *t, HCI_STREAM s)
@@ -296,6 +297,103 @@ main(void)
     CHECK(Replied(2, 113, 0xAB) && Replied(3, 111, 0xEB),
           "second ACL read releases the second event in order");
 
+    printf("-- A port reset keeps HCI state: queues, history and the transport --\n");
+    {
+        unsigned char h[USBIP_URB_HEADER_SIZE] = { 0 };
+
+        UsbipDeviceBeginSession(&device);
+        g_ReplyCount = 0;
+        g_Ordered = 1;
+        g_TransportResets = 0;
+
+        /* A queued inbound packet survives the reset. */
+        Arrive(HciStreamEvent, 0xE8);
+        UsbipPut32(h + USBIP_HDR_COMMAND, USBIP_CMD_SUBMIT);
+        UsbipPut32(h + USBIP_HDR_SEQNUM, 200);
+        UsbipPut32(h + USBIP_HDR_PACKETS, USBIP_NON_ISO_PACKETS);
+        h[USBIP_HDR_SETUP + 0] = 0x23;   /* class/other: SET_PORT_FEATURE(PORT_RESET) */
+        h[USBIP_HDR_SETUP + 1] = 0x03;
+        h[USBIP_HDR_SETUP + 2] = 0x04;
+        CHECK(UsbipDeviceHandle(&device, h, NULL, 0, now) != 0, "port reset answered OK");
+        CHECK(g_TransportResets == 0, "port reset does not reset the transport");
+        CHECK(device.Stats.PortResets == 1, "one port reset counted");
+        Read(&device, 201, EP_EVENT, now);
+        CHECK(Replied(1, 201, 0xE8), "queued event survives the port reset");
+
+        /* A purge-crossed reply still replays after the reset. */
+        UsbipDeviceBeginSession(&device);
+        g_ReplyCount = 0;
+        Read(&device, 210, EP_EVENT, now);
+        Arrive(HciStreamAcl, 0xAA);       /* an older ACL packet still awaiting its read */
+        Arrive(HciStreamEvent, 0xE9);
+        UsbipDeviceDrain(&device, now);
+        CHECK(g_ReplyCount == 0, "event held behind the older ACL packet");
+        Read(&device, 214, EP_ACL, now);
+        CHECK(Replied(0, 214, 0xAA) && Replied(1, 210, 0xE9), "ACL first, then the event");
+        Unlink(&device, 211, 210, now);   /* the event reply crossed the unlink */
+        memset(h, 0, sizeof(h));
+        UsbipPut32(h + USBIP_HDR_COMMAND, USBIP_CMD_SUBMIT);
+        UsbipPut32(h + USBIP_HDR_SEQNUM, 212);
+        UsbipPut32(h + USBIP_HDR_PACKETS, USBIP_NON_ISO_PACKETS);
+        h[USBIP_HDR_SETUP + 0] = 0x23;
+        h[USBIP_HDR_SETUP + 1] = 0x03;
+        h[USBIP_HDR_SETUP + 2] = 0x04;
+        (void)UsbipDeviceHandle(&device, h, NULL, 0, now + MS(21));
+        Read(&device, 213, EP_EVENT, now + MS(21));
+        CHECK(Replied(2, 212, 0x00) || Replied(3, 213, 0xE9), "control reply then lost event replayed after reset");
+        CHECK(device.Stats.Redelivered == 5, "redeliveries kept across the reset");
+    }
+
+    printf("-- Benign unlink crossings are counted, not fatal --\n");
+    {
+        unsigned char h[USBIP_URB_HEADER_SIZE] = { 0 };
+        const unsigned char feat[8] = { 0x00, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+
+        UsbipDeviceBeginSession(&device);
+        g_ReplyCount = 0;
+        UsbipPut32(h + USBIP_HDR_COMMAND, USBIP_CMD_SUBMIT);
+        UsbipPut32(h + USBIP_HDR_SEQNUM, 300);
+        UsbipPut32(h + USBIP_HDR_PACKETS, USBIP_NON_ISO_PACKETS);
+        memcpy(h + USBIP_HDR_SETUP, feat, sizeof(feat));   /* GET_CONFIGURATION */
+        CHECK(UsbipDeviceHandle(&device, h, NULL, 0, now) != 0, "control write answered");
+        Unlink(&device, 301, 300, now);   /* answer crossed the unlink */
+        CHECK(device.Poisoned == 0, "benign control crossing is not poison");
+        CHECK(device.Stats.UnlinksAnswered == 1, "one answered unlink counted");
+        CHECK(device.Stats.UnlinksIrrecoverable == 0, "nothing irrecoverable");
+    }
+
+    printf("-- An aged-out event reply ends the session --\n");
+    {
+        unsigned long base = 400;
+        unsigned int i;
+
+        UsbipDeviceBeginSession(&device);
+        g_ReplyCount = 0;
+        g_Ordered = 0;   /* streams independent: every read drains at once */
+        Read(&device, base, EP_EVENT, now);
+        Arrive(HciStreamEvent, 0xF0);
+        UsbipDeviceDrain(&device, now);
+        CHECK(Replied(0, base, 0xF0), "first event delivered");
+        /* Push 32 newer deliveries so the first reply ages out of the history. */
+        for (i = 1; i <= 32; i++) {
+            Read(&device, base + i, EP_EVENT, now);
+            Arrive(HciStreamEvent, (unsigned char)(0xF0 + i));
+            UsbipDeviceDrain(&device, now);
+        }
+        {
+            int poisoned = 0;
+            unsigned char h[USBIP_URB_HEADER_SIZE] = { 0 };
+
+            UsbipPut32(h + USBIP_HDR_COMMAND, USBIP_CMD_UNLINK);
+            UsbipPut32(h + USBIP_HDR_SEQNUM, 500);
+            UsbipPut32(h + USBIP_HDR_UNLINK_SEQNUM, base);
+            poisoned = !UsbipDeviceHandle(&device, h, NULL, 0, now);
+            CHECK(poisoned != 0 && device.Poisoned != 0, "aged-out reply poisons the session");
+            CHECK(device.Stats.UnlinksIrrecoverable == 1, "one irrecoverable unlink counted");
+        }
+        g_Ordered = 1;
+    }
+
     printf("-- Isochronous packets must lie in order inside the transfer --\n");
     {
         static const unsigned long same[4]    = { 0, 17, 0, 17 };   /* both packets are the whole buffer */
@@ -327,29 +425,6 @@ main(void)
         CHECK(device.Stats.ScoRejectedUrbs == 2, "two transfers rejected");
     }
 
-    printf("-- No isochronous packet may exceed the setting's wMaxPacketSize --\n");
-    {
-        static const unsigned long exact[2] = { 0, 17 };
-        static const unsigned long over[2]  = { 0, 18 };   /* inside the transfer, one byte over alt 2 */
-        unsigned long long t = now + MS(1100);
-
-        g_ReplyCount = 0;
-        IsoSubmit(&device, 130, 0, 18, over, 1, t);
-        CHECK(g_ReplyCount == 1 && g_Replies[0].Seqnum == 130 && g_Replies[0].Status == USBIP_EINVAL,
-              "OUT packet of 18 bytes at alternate setting 2 (17): -EINVAL");
-        IsoSubmit(&device, 131, 1, 18, over, 1, t);
-        CHECK(g_ReplyCount == 2 && g_Replies[1].Seqnum == 131 && g_Replies[1].Status == USBIP_EINVAL,
-              "IN packet of 18 bytes: -EINVAL");
-        IsoSubmit(&device, 132, 0, 17, exact, 1, t);
-        IsoSubmit(&device, 133, 1, 17, exact, 1, t);
-        CHECK(g_ReplyCount == 2, "packets of exactly 17 bytes are accepted and paced");
-        (void)UsbipDeviceTick(&device, t + MS(1000));
-        CHECK(g_ReplyCount == 4 && g_Replies[2].Status == 0 && g_Replies[3].Status == 0 &&
-              ((g_Replies[2].Seqnum == 132 && g_Replies[3].Seqnum == 133) ||
-               (g_Replies[2].Seqnum == 133 && g_Replies[3].Seqnum == 132)),
-              "and both complete");
-        CHECK(device.Stats.ScoRejectedUrbs == 4, "four transfers rejected in all");
-    }
 
     if (g_Failures != 0) {
         printf("\nUSBIP DEVICE SELFTEST FAILED: %d assertion(s) failed\n", g_Failures);

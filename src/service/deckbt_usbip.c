@@ -279,18 +279,19 @@ LogStats(const char *Why)
 
     Log("stats (%s): ctl %lu hci %lu stalls %lu evt %lu aclOut %lu aclIn %lu alt %u altChanges %lu "
         "portResets %lu scoOut %lu/%luB hci %lu rej %lu scoIn %lu/%luB scoRejUrbs %lu unlink %lu/%lu missed "
-        "(replies lost %lu, redelivered %lu) order holds %lu/%lu timed out maxLateUs %lu",
+        "(answered %lu, irrecoverable %lu; replies lost %lu, redelivered %lu) order holds %lu/%lu timed out maxLateUs %lu",
         Why, s->ControlRequests, s->HciCommands, s->Stalls, s->EventsIn, s->AclOut, s->AclIn,
         g_Device->ScoAlt, s->AltChanges, s->PortResets, s->ScoOutUrbs, s->ScoOutBytes, s->ScoOutHci,
         s->ScoOutRejected, s->ScoInUrbs, s->ScoInBytes, s->ScoRejectedUrbs, s->Unlinks,
-        s->UnlinksMissed, s->RepliesLost, s->Redelivered, s->OrderHolds, s->OrderHoldTimeouts, s->MaxLateUs);
+        s->UnlinksMissed, s->UnlinksAnswered, s->UnlinksIrrecoverable, s->RepliesLost, s->Redelivered,
+        s->OrderHolds, s->OrderHoldTimeouts, s->MaxLateUs);
     if (g_Qca != NULL) {
         const QCA_BACKEND_STATS *q = &g_Qca->Stats;
         const HCI_BRIDGE_COUNTERS *c = &g_Qca->Bridge.Counters;
 
         Log("uart (%s): rx %llu B tx %llu B, readErr %lu writeErr %lu txFull %lu, IBS wakeInd %lu sleepInd %lu "
             "ack %lu ackCtsLow %lu wakeAckGap %lu; bridge cmd %lu/%lu held %lu evt %lu/%lu vendorDropped %lu aclOut %lu "
-            "aclIn %lu noCredit %lu (pool %u+%u LE, free %u) scoOut %lu scoIn %lu; shutdown disconnects %lu "
+            "aclIn %lu noCredit %lu (pool %u+%u LE, free %u/%u) scoOut %lu scoIn %lu; shutdown disconnects %lu "
             "refused %lu, commands withheld %lu",
             Why, q->BytesRead, q->BytesWritten, q->ReadErrors, q->WriteErrors, q->TxQueueFull,
             q->IbsWakeIndRx, q->IbsSleepIndRx, q->IbsWakeAckTx, q->IbsAckCtsLow,
@@ -298,6 +299,7 @@ LogStats(const char *Why)
             c->CommandsSentToWire, c->CommandsSubmitted, c->CommandsHeld, c->EventsQueued, c->EventsReceived,
             c->EventsSuppressedVendor, c->AclSentToWire, c->AclQueued, c->AclDroppedNoCredit,
             g_Qca->Bridge.TotalAclBuffers, g_Qca->Bridge.LeTotalAclBuffers, g_Qca->Bridge.AvailableAclCredits,
+            g_Qca->Bridge.AvailableLeCredits,
             c->ScoSentToWire, c->ScoReceived, c->ShutdownDisconnects, c->ShutdownDisconnectsRefused,
             c->CommandsWithheld);
     }
@@ -521,7 +523,9 @@ SessionThread(LPVOID Parameter)
         (void)SetEvent(g_Kick);
         urbs++;
         if (!ok) {
-            why = g_Device->Broken ? "send failed" : "protocol violation";
+            why = g_Device->Poisoned
+                ? "unrecoverable unlink: an event or ACL reply aged out of the replay history"
+                : g_Device->Broken ? "send failed" : "protocol violation";
             break;
         }
     }

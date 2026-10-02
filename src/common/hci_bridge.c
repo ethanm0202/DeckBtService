@@ -62,57 +62,68 @@ static const HCI_TRANSPORT_OPS g_HciBridgeTransportOps = {
     HciBridgeFlushScoTransport
 };
 
-/* Internal helper: compute sum of Outstanding over all InUse handle entries */
-static unsigned short HciBridgeTotalInFlight(const HCI_BRIDGE *Bridge)
+/* Internal helper: sum of Outstanding over InUse handle entries in one pool (1 = LE, 0 = BR/EDR) */
+static unsigned short HciBridgeTotalInFlight(const HCI_BRIDGE *Bridge, unsigned char LePool)
 {
     unsigned int i;
     unsigned short inFlight = 0;
     for (i = 0; i < HCI_BRIDGE_MAX_HANDLES; i++) {
-        if (Bridge->Handles[i].InUse) {
+        if (Bridge->Handles[i].InUse && Bridge->Handles[i].IsLe == LePool) {
             inFlight = (unsigned short)(inFlight + Bridge->Handles[i].Outstanding);
         }
     }
     return inFlight;
 }
 
-/* Controller ACL buffers the host may fill at once: the shared pool plus any separate LE pool. */
-static unsigned short HciBridgePoolSize(const HCI_BRIDGE *Bridge)
-{
-    unsigned long pool = (unsigned long)Bridge->TotalAclBuffers + Bridge->LeTotalAclBuffers;
-
-    return (unsigned short)(pool > 0xFFFFu ? 0xFFFFu : pool);
-}
-
-/* Internal helper: clamp AvailableAclCredits against true ceiling (pool - inFlight) */
-static void HciBridgeClampCredits(HCI_BRIDGE *Bridge)
+/* Internal helper: clamp one pool's free counter against its own ceiling (pool - inFlight) */
+static void HciBridgeClampPoolCredits(HCI_BRIDGE *Bridge, unsigned char LePool)
 {
     unsigned short inFlight;
     unsigned short ceiling;
     unsigned short pool;
+    unsigned short *credits;
 
-    if (Bridge->TotalAclBuffers == 0) {
-        Bridge->AvailableAclCredits = 0;
-        return;
+    if (LePool) {
+        if (Bridge->LeTotalAclBuffers == 0) {
+            Bridge->AvailableLeCredits = 0;
+            return;
+        }
+        pool = Bridge->LeTotalAclBuffers;
+        credits = &Bridge->AvailableLeCredits;
+    } else {
+        if (Bridge->TotalAclBuffers == 0) {
+            Bridge->AvailableAclCredits = 0;
+            return;
+        }
+        pool = Bridge->TotalAclBuffers;
+        credits = &Bridge->AvailableAclCredits;
     }
 
-    pool = HciBridgePoolSize(Bridge);
-    inFlight = HciBridgeTotalInFlight(Bridge);
+    inFlight = HciBridgeTotalInFlight(Bridge, LePool);
     ceiling = (pool > inFlight) ? (unsigned short)(pool - inFlight) : 0;
 
-    if (Bridge->AvailableAclCredits > ceiling) {
-        Bridge->AvailableAclCredits = ceiling;
+    if (*credits > ceiling) {
+        *credits = ceiling;
     }
 }
 
-/* Nothing in flight, every controller buffer free: after HCI_Reset or a transport reset. */
+/* Internal helper: clamp both pools against their own ceilings. */
+static void HciBridgeClampCredits(HCI_BRIDGE *Bridge)
+{
+    HciBridgeClampPoolCredits(Bridge, 0);
+    HciBridgeClampPoolCredits(Bridge, 1);
+}
+
+/* Nothing in flight, every controller buffer free: after HCI_Reset. */
 static void HciBridgeRefillCredits(HCI_BRIDGE *Bridge)
 {
     memset(Bridge->Handles, 0, sizeof(Bridge->Handles));
-    Bridge->AvailableAclCredits = HciBridgePoolSize(Bridge);
+    Bridge->AvailableAclCredits = Bridge->TotalAclBuffers;
+    Bridge->AvailableLeCredits = Bridge->LeTotalAclBuffers;
 }
 
 /* Internal helper: reserve a slot for Handle if not already present; returns slot index or -1 if full */
-static int HciBridgeReserveHandleSlot(HCI_BRIDGE *Bridge, unsigned short Handle)
+static int HciBridgeReserveHandleSlot(HCI_BRIDGE *Bridge, unsigned short Handle, unsigned char IsLe)
 {
     unsigned int i;
     int firstFree = -1;
@@ -120,6 +131,14 @@ static int HciBridgeReserveHandleSlot(HCI_BRIDGE *Bridge, unsigned short Handle)
     for (i = 0; i < HCI_BRIDGE_MAX_HANDLES; i++) {
         if (Bridge->Handles[i].InUse) {
             if (Bridge->Handles[i].Handle == Handle) {
+                /*
+                 * Handle numbers are reused across connections. A slot with nothing
+                 * outstanding attributes nothing, so retag it to this link's pool;
+                 * with packets still in flight keep the pool they were sent on.
+                 */
+                if (Bridge->Handles[i].Outstanding == 0) {
+                    Bridge->Handles[i].IsLe = IsLe;
+                }
                 return (int)i;
             }
         } else if (firstFree < 0) {
@@ -131,6 +150,7 @@ static int HciBridgeReserveHandleSlot(HCI_BRIDGE *Bridge, unsigned short Handle)
         Bridge->Handles[firstFree].InUse = 1;
         Bridge->Handles[firstFree].Handle = Handle;
         Bridge->Handles[firstFree].Outstanding = 0;
+        Bridge->Handles[firstFree].IsLe = IsLe;
         return firstFree;
     }
 
@@ -151,8 +171,13 @@ static void HciBridgeRecordAclCompleted(
             unsigned short actual = (Bridge->Handles[i].Outstanding >= Completed)
                                   ? Completed
                                   : Bridge->Handles[i].Outstanding;
+            unsigned char isLe = Bridge->Handles[i].IsLe;
             Bridge->Handles[i].Outstanding = (unsigned short)(Bridge->Handles[i].Outstanding - actual);
-            Bridge->AvailableAclCredits = (unsigned short)(Bridge->AvailableAclCredits + actual);
+            if (isLe) {
+                Bridge->AvailableLeCredits = (unsigned short)(Bridge->AvailableLeCredits + actual);
+            } else {
+                Bridge->AvailableAclCredits = (unsigned short)(Bridge->AvailableAclCredits + actual);
+            }
             matched = 1;
             break;
         }
@@ -163,7 +188,7 @@ static void HciBridgeRecordAclCompleted(
         return;
     }
 
-    /* Clamp against true ceiling: TotalAclBuffers - inFlight */
+    /* Clamp the credited pool against its own ceiling (pool - inFlight). */
     HciBridgeClampCredits(Bridge);
 }
 
@@ -174,10 +199,15 @@ static void HciBridgeRecordDisconnection(HCI_BRIDGE *Bridge, unsigned short Hand
     for (i = 0; i < HCI_BRIDGE_MAX_HANDLES; i++) {
         if (Bridge->Handles[i].InUse && Bridge->Handles[i].Handle == Handle) {
             unsigned short lostCredits = Bridge->Handles[i].Outstanding;
+            unsigned char isLe = Bridge->Handles[i].IsLe;
             Bridge->Handles[i].Outstanding = 0;
             Bridge->Handles[i].InUse = 0;
             if (lostCredits > 0) {
-                Bridge->AvailableAclCredits = (unsigned short)(Bridge->AvailableAclCredits + lostCredits);
+                if (isLe) {
+                    Bridge->AvailableLeCredits = (unsigned short)(Bridge->AvailableLeCredits + lostCredits);
+                } else {
+                    Bridge->AvailableAclCredits = (unsigned short)(Bridge->AvailableAclCredits + lostCredits);
+                }
             }
             HciBridgeClampCredits(Bridge);
             break;
@@ -534,32 +564,50 @@ static unsigned char HciBridgeSubmitAcl(
         return 0;
     }
 
-    /* Credit check */
-    if (bridge->AvailableAclCredits == 0) {
-        bridge->Counters.AclDroppedNoCredit++;
-        return 0;
-    }
+    /* Pool of this link: LE uses the separate pool only when the controller reported one. */
     handle = (unsigned short)(((unsigned short)Packet[0] | ((unsigned short)Packet[1] << 8)) & 0x0FFFu);
-
-    /* Reserve handle slot BEFORE consuming credit or sending to wire */
     {
-        int slotIdx = HciBridgeReserveHandleSlot(bridge, handle);
-        if (slotIdx < 0) {
-            bridge->Counters.AclDroppedNoHandleSlot++;
+        /*
+         * Ordering guarantee: the bridge processes a Connection_Complete in HciBridgeOnEvent
+         * before the front end can deliver it to Windows, and Windows cannot submit ACL for a
+         * handle before it saw its Connection_Complete, so HciBridgeFindLink(handle) is reliable
+         * at submit time. A handle with no link entry (should not happen) conservatively uses
+         * the BR/EDR pool.
+         */
+        int link = HciBridgeFindLink(bridge, handle);
+        unsigned char isLe = (unsigned char)(link >= 0 && !bridge->Links[link].Classic &&
+                                             bridge->LeTotalAclBuffers != 0);
+        unsigned short credits = isLe ? bridge->AvailableLeCredits : bridge->AvailableAclCredits;
+
+        if (credits == 0) {
+            bridge->Counters.AclDroppedNoCredit++;
             return 0;
         }
 
-        if (bridge->Wire.Ops && bridge->Wire.Ops->SendAcl) {
-            unsigned char ok = bridge->Wire.Ops->SendAcl(
-                bridge->Wire.Context, Packet, Length);
-            if (ok) {
-                bridge->AvailableAclCredits--;
-                bridge->Counters.AclSentToWire++;
-                bridge->Handles[slotIdx].Outstanding++;
-                return 1;
-            } else {
-                bridge->Counters.AclDroppedWireFailed++;
+        /* Reserve handle slot BEFORE consuming credit or sending to wire */
+        {
+            int slotIdx = HciBridgeReserveHandleSlot(bridge, handle, isLe);
+            if (slotIdx < 0) {
+                bridge->Counters.AclDroppedNoHandleSlot++;
                 return 0;
+            }
+
+            if (bridge->Wire.Ops && bridge->Wire.Ops->SendAcl) {
+                unsigned char ok = bridge->Wire.Ops->SendAcl(
+                    bridge->Wire.Context, Packet, Length);
+                if (ok) {
+                    if (isLe) {
+                        bridge->AvailableLeCredits--;
+                    } else {
+                        bridge->AvailableAclCredits--;
+                    }
+                    bridge->Counters.AclSentToWire++;
+                    bridge->Handles[slotIdx].Outstanding++;
+                    return 1;
+                } else {
+                    bridge->Counters.AclDroppedWireFailed++;
+                    return 0;
+                }
             }
         }
     }
@@ -853,11 +901,11 @@ unsigned char HciBridgeOnEvent(
             HciBridgeClampCredits(Bridge);
         } else if (opcode == 0x2002u && status == 0x00u && Length >= 9) {
             unsigned short leTotal = Packet[8];
-            if (leTotal > Bridge->LeTotalAclBuffers && Bridge->TotalAclBuffers != 0) {
-                Bridge->AvailableAclCredits =
-                    (unsigned short)(Bridge->AvailableAclCredits + (leTotal - Bridge->LeTotalAclBuffers));
-            }
+            unsigned short wasLe = Bridge->LeTotalAclBuffers;
             Bridge->LeTotalAclBuffers = leTotal;
+            if (wasLe == 0 && leTotal != 0) {
+                Bridge->AvailableLeCredits = leTotal;
+            }
             HciBridgeClampCredits(Bridge);
         }
     }

@@ -66,9 +66,11 @@
  *      refills the pool. A reset ends every connection and frees every controller buffer without
  *      Disconnection_Complete or Number_Of_Completed_Packets. Windows resets the controller when
  *      Bluetooth is switched off and on, so packets in flight at that moment would otherwise leak.
- *   8. LE buffers: if LE_Read_Buffer_Size (opcode 0x2002) reports a separate LE pool, the host may
- *      fill both pools at once, so the pool is the sum. The host enforces each pool itself; this
- *      check only guards against gross overflow and must never refuse what the host may send.
+ *   8. LE buffers: if LE_Read_Buffer_Size (opcode 0x2002) reports a nonzero separate LE pool,
+ *      the pools are enforced separately; an ACL packet consumes the pool of its link (LE links
+ *      use the LE pool only when LeTotalAclBuffers != 0, else the shared pool). Both pools refill
+ *      on a successful HCI_Reset. Number_Of_Completed_Packets, Disconnection_Complete and the
+ *      handle table credit the pool the handle's entry recorded.
  *
  * POPSTREAM SCO EXCEPTION (OVERSIZED PACKETS DISCARDED)
  * ----------------------------------------------------
@@ -203,6 +205,7 @@ typedef struct _HCI_BRIDGE_HANDLE_ENTRY {
     unsigned short Handle;      /* 12-bit connection handle */
     unsigned short Outstanding; /* ACL packets sent to controller awaiting completion */
     unsigned char  InUse;
+    unsigned char  IsLe;        /* uses the separate LE pool; 0 = the BR/EDR (or shared) pool */
 } HCI_BRIDGE_HANDLE_ENTRY;
 
 /* An open ACL link (OPEN LINKS) */
@@ -327,7 +330,8 @@ typedef struct _HCI_BRIDGE {
     /* ACL Credit Accounting */
     unsigned short        TotalAclBuffers;     /* Read_Buffer_Size: BR/EDR (or shared) ACL buffers */
     unsigned short        LeTotalAclBuffers;   /* LE_Read_Buffer_Size: separate LE pool, 0 = shared */
-    unsigned short        AvailableAclCredits;
+    unsigned short        AvailableAclCredits;  /* free BR/EDR (or shared) buffers */
+    unsigned short        AvailableLeCredits;   /* free LE buffers; unused while LeTotalAclBuffers == 0 */
     HCI_BRIDGE_HANDLE_ENTRY Handles[HCI_BRIDGE_MAX_HANDLES];
 
     /* Open ACL links (OPEN LINKS) */

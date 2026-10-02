@@ -33,6 +33,7 @@
 #define USBIP_DEV_SCRATCH_BYTES    65536u /* largest IN payload sent in one RET_SUBMIT */
 #define USBIP_DEV_SENT_HISTORY     32u    /* recent event / ACL replies kept per stream */
 #define USBIP_DEV_SENT_BYTES       1028u  /* largest HCI event or ACL packet (1025) */
+#define USBIP_DEV_ANSWERED_HISTORY 256u   /* answered writes, control and voice transfers */
 #define USBIP_DEV_ORDER_HOLD       200000ull /* 20 ms in 100 ns: longest cross-endpoint hold */
 
 /* Writes one complete message. Returns nonzero on success; zero marks the connection broken. */
@@ -97,6 +98,12 @@ typedef struct _USBIP_SENT_RING {
     unsigned int  Lost;             /* entries marked Lost, owed to the next reads */
 } USBIP_SENT_RING;
 
+typedef struct _USBIP_ANSWERED_RING {
+    unsigned long Items[USBIP_DEV_ANSWERED_HISTORY];
+    unsigned int  Head;
+    unsigned int  Count;
+} USBIP_ANSWERED_RING;
+
 typedef struct _USBIP_DEVICE_STATS {
     unsigned long ControlRequests;
     unsigned long HciCommands;
@@ -115,6 +122,8 @@ typedef struct _USBIP_DEVICE_STATS {
     unsigned long Unlinks;
     unsigned long UnlinksMissed;      /* unlink of a transfer already answered */
     unsigned long RepliesLost;        /* ...whose reply carried an event or ACL packet */
+    unsigned long UnlinksAnswered;     /* ...whose answer was a write, control or voice transfer */
+    unsigned long UnlinksIrrecoverable;/* ...whose event/ACL reply aged out of the reply history */
     unsigned long Redelivered;        /* lost packets given to a later read */
     unsigned long OrderHolds;         /* a packet waited for an earlier one on the other endpoint */
     unsigned long OrderHoldTimeouts;  /* ...and was delivered anyway after USBIP_DEV_ORDER_HOLD */
@@ -130,6 +139,7 @@ typedef struct _USBIP_DEVICE {
     USBIP_DEVICE_TRACE Trace;
     void              *TraceContext;
     int                Broken;         /* a Send failed; the host must drop the connection */
+    int                Poisoned;       /* an unrecoverable unlink; the host must drop the connection */
 
     unsigned char      Configuration;
     unsigned char      ScoAlt;
@@ -138,6 +148,7 @@ typedef struct _USBIP_DEVICE {
     USBIP_PARK_QUEUE   AclIn;
     USBIP_SENT_RING    EventSent;
     USBIP_SENT_RING    AclSent;
+    USBIP_ANSWERED_RING Answered;      /* answered writes, control and voice transfers */
     USBIP_ISO_QUEUE    ScoOutQ;
     USBIP_ISO_QUEUE    ScoInQ;
     USBIP_ISO_URB      IsoOverflow;    /* a transfer arriving with every slot taken */

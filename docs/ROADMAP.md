@@ -1,6 +1,6 @@
 # Roadmap
 
-What DeckBtService does as of v0.1.5, what comes next, and how it differs from the stock Bluetooth driver. Test results are in [VERIFICATION.md](VERIFICATION.md).
+What DeckBtService does as of v0.1.6, what comes next, and how it differs from the stock Bluetooth driver. Test results are in [VERIFICATION.md](VERIFICATION.md).
 
 ## Done in v0.1.0
 
@@ -36,6 +36,10 @@ What DeckBtService does as of v0.1.5, what comes next, and how it differs from t
 
 - [x] HCI bridge and service fixes ([CHANGELOG.md](../CHANGELOG.md)): vendor command completions matched to the host command by opcode; queued voice packets flushed at the end of a call, removed per connection on disconnect, and retried when a transmit slot frees; service command lines quoted by Windows rules, sized exactly and read as Unicode.
 
+## Done in v0.1.6
+
+- [x] USB and HCI transport fixes ([CHANGELOG.md](../CHANGELOG.md)): a port reset keeps bridge queues, command accounting, credits and reply history, as on a real dongle; separate BR/EDR and LE ACL credit pools; benign unlink crossings counted, an aged-out event/ACL reply ends the session for a clean restart.
+
 ## Next
 
 - [ ] **Longer runs**: overnight sleep, calls that span a sleep, long calls, and long-run input quality. Connected devices are not proof of audio or input quality.
@@ -43,7 +47,7 @@ What DeckBtService does as of v0.1.5, what comes next, and how it differs from t
 - [ ] **Memory Integrity, Secure Boot and games with kernel anti-cheat**, each verified separately.
 - [ ] **Narrowband voice** (CVSD, alternate settings 1-5): implemented, not tested.
 - [ ] **Stock parity beyond the microphone**: a controlled reconnect and new-pairing matrix, game controllers and other HID input, A2DP/AVRCP, several devices at once, GATT/RFCOMM/PAN, range and Wi-Fi coexistence, and latency and battery measurements against the stock driver. See [Differences from stock Bluetooth](#differences-from-stock-bluetooth).
-- [ ] **Transport correctness under cancellation**: the bounded-replay limitations stay open. The unlink storms seen with usbip-win2 0.9.8.0 were its issue #190 resets; on 0.9.8.1 no unlinks were counted in the reconnect tests, which shows the trigger is gone, not that the remaining races are handled.
+- [ ] **Transport correctness under cancellation**: the bounded-replay limitations stay open. An unlink for a reply aged out of the 32-packet history now ends the session for a clean restart instead of continuing with a hole; the unlink storms seen with usbip-win2 0.9.8.0 were its issue #190 resets. On 0.9.8.1 no unlinks were counted in the reconnect tests, which shows the trigger is gone, not that the remaining races are handled.
 - [ ] **Controller wedge**: one v0.1.3 UART failure required a Windows restart. Writer defects now have regression-tested mitigations in v0.1.4, but the initiating cause and a demonstrated non-reboot recovery remain open.
 - [ ] **Host in-band sleep**: the host never sends `SLEEP_IND`, so the controller sees it awake for the whole session ([QCA2066.md](QCA2066.md#in-band-sleep)). Measure the battery cost against the stock driver before changing it.
 - [ ] **Code signing**: the programs are not Authenticode-signed, so Windows warns about an unknown publisher. Since v0.1.3 their origin is shown by GitHub build-provenance attestations instead.
@@ -66,7 +70,7 @@ Apart from the microphone, the aim is behaviour equivalent to the stock driver; 
 | Startup and recovery | Bluetooth depends on the service, the published UART, the vendor firmware package and usbip-win2. Bring-up takes about 3.5 s, plus enumeration and reconnect time. Service or transport recovery removes the adapter for a few seconds and disconnects devices. There is no fallback to the stock radio while installed. |
 | Suspend and wake | S3 is handled by a clean disconnect of every link, then detach, firmware reload and re-attach. Music and microphone were back 15.6 s after waking in the measured cycle. Overnight sleep, hibernate and Fast Startup have not been tested. USB remote wake is not implemented; whether the stock driver supports wake-by-Bluetooth on the Deck has not been established either. |
 | Power and performance | Extra user/kernel transitions, loopback TCP, queues and a background process replace the direct vendor transport. The service process used about 6.9 MiB working set and 2.7 MiB private memory, excluding driver memory. Battery use, input and audio latency, throughput and behaviour under gaming load have not been measured against stock. |
-| Cancellation and ordering | A 32-packet history per input stream covers replies lost to usbip-win2 unlink races. Cross-endpoint ordering waits at most 20 ms, after which a later packet may overtake. A late cancellation cannot retract a newer packet Windows has already consumed. These mitigations do not prove lossless, globally ordered delivery. |
+| Cancellation and ordering | A 32-packet history per input stream covers replies lost to usbip-win2 unlink races; a reply aged out of the history ends the session for a clean restart. Cross-endpoint ordering waits at most 20 ms, after which a later packet may overtake. A late cancellation cannot retract a newer packet Windows has already consumed. These mitigations do not prove lossless, globally ordered delivery. |
 | Fault handling | Process and TCP-loss recovery have been exercised. One v0.1.3 UART failure did not recover until Windows restarted. The v0.1.4 release gates steady writes on physical wake, stops after a partial write, and pauses retries after three consecutive CTS-unresponsive starts. The original failure's cause remains unknown. Stop and suspend watchdogs remain in place; finite queues and an eight-handle ACL accounting table are implementation limits. |
 | Installation and updates | The installer blocks the stock transport with a device-installation deny policy and publishes the UART through a registry value Microsoft documents for development; the uninstaller reverts both and restores the stock driver. The service loads firmware from the newest installed `qcbtuart.inf_amd64_*` package, so removing or changing Valve's Bluetooth driver package affects it. usbip-win2 must be 0.9.8.1 or later. Behaviour across Windows and driver updates is untested. |
 | Trust and games | No test signing, and the kernel driver is Microsoft-signed, but it adds a third-party kernel driver and a privileged loopback service. Accepting only PID-4 imports identifies kernel traffic, not a particular driver. Secure Boot and Memory Integrity are untested. Two short Fortnite lobby retests passed after a controller wedge near an earlier launch; neither causation nor sustained gameplay compatibility is established. |

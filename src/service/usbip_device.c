@@ -211,6 +211,40 @@ SentOldestLost(USBIP_SENT_RING *Ring)
     return NULL;
 }
 
+/* ------------------------------------------------------------------ answered benign transfers */
+
+/*
+ * An unlink can arrive for a transfer the server already answered after usbip-win2
+ * cancelled it client-side. An event or ACL read's reply carried a packet, so it stays
+ * in the reply history and replays. Every other answer - a control request, an ACL or
+ * SCO write, a SCO read's stale voice - lost nothing the host cannot redo, so its
+ * unlink is tolerated. This ring remembers those sequence numbers long enough to tell
+ * that case from an event or ACL reply that aged out of the reply history, which is
+ * unrecoverable: Windows cancelled the read and the packet can no longer be delivered.
+ */
+static void
+AnsweredRecord(USBIP_DEVICE *Device, unsigned long Seqnum)
+{
+    if (Device->Answered.Count == USBIP_DEV_ANSWERED_HISTORY) {
+        Device->Answered.Head = (Device->Answered.Head + 1u) % USBIP_DEV_ANSWERED_HISTORY;
+        Device->Answered.Count--;
+    }
+    Device->Answered.Items[(Device->Answered.Head + Device->Answered.Count) %
+                           USBIP_DEV_ANSWERED_HISTORY] = Seqnum;
+    Device->Answered.Count++;
+}
+
+static int
+AnsweredContains(const USBIP_DEVICE *Device, unsigned long Seqnum)
+{
+    for (unsigned int i = 0; i < Device->Answered.Count; i++) {
+        if (Device->Answered.Items[(Device->Answered.Head + i) %
+                                   USBIP_DEV_ANSWERED_HISTORY] == Seqnum) {
+            return 1;
+        }
+    }
+    return 0;
+}
 /* ------------------------------------------------------------------ parked isoch transfers */
 
 /* Index 0 is the oldest parked transfer; Index == Count is the next free slot. */
@@ -327,6 +361,7 @@ ScoCompleteIn(USBIP_DEVICE *Device, const USBIP_ISO_URB *Urb)
     isoLength = WriteIsoDescs(Device, Urb, actual);
     (void)SendRetSubmit(Device, Urb->Seqnum, 0, total, Device->Scratch, total, Urb->StartFrame,
                         Urb->Packets, Device->IsoDesc, isoLength);
+    AnsweredRecord(Device, Urb->Seqnum);
 }
 
 static void
@@ -336,6 +371,7 @@ ScoCompleteOut(USBIP_DEVICE *Device, const USBIP_ISO_URB *Urb)
 
     (void)SendRetSubmit(Device, Urb->Seqnum, 0, Urb->Bytes, NULL, 0, Urb->StartFrame,
                         Urb->Packets, Device->IsoDesc, isoLength);
+    AnsweredRecord(Device, Urb->Seqnum);
 }
 
 static void
@@ -361,6 +397,7 @@ ScoReject(USBIP_DEVICE *Device, unsigned long Seqnum)
 {
     Device->Stats.ScoRejectedUrbs++;
     (void)SendRetSubmit(Device, Seqnum, USBIP_EINVAL, 0, NULL, 0, 0, 0, NULL, 0);
+    AnsweredRecord(Device, Seqnum);
 }
 
 /*
@@ -435,6 +472,7 @@ ScoSubmit(USBIP_DEVICE *Device, unsigned long Seqnum, int In, unsigned long Leng
         unsigned long isoLength = WriteIsoDescs(Device, urb, NULL);
 
         (void)SendRetSubmit(Device, Seqnum, 0, 0, NULL, 0, urb->StartFrame, Packets, Device->IsoDesc, isoLength);
+        AnsweredRecord(Device, Seqnum);
     } else {
         ScoCompleteOut(Device, urb);
     }
@@ -557,10 +595,24 @@ Control(USBIP_DEVICE *Device, unsigned long Seqnum, unsigned long Length,
             break;
         }
     } else if (bm == BM_PORT_FEATURE && request == REQ_SET_FEATURE && value == FEATURE_PORT_RESET) {
-        /* Port reset: the host restarts the radio, as a real dongle's reset does. */
-        HciTransportReset(Device->Transport);
-        SentClear(&Device->EventSent);
-        SentClear(&Device->AclSent);
+        /*
+         * Port reset: usbip-win2 forwards Windows' device reset as this EP0 request
+         * (drivers/ude/device.cpp, reset_port), and Linux's usbip stub performs
+         * usb_reset_device for the same request (stub_rx.c, tweak_reset_device_cmd).
+         * A port reset re-enumerates the USB device; it does not restart the
+         * controller or the host's HCI state: Windows keeps BTHPORT state and
+         * re-drives pending transfers, and a real dongle retains queued events and
+         * pending work (VERIFICATION.md, "Headset audio lost after Bluetooth
+         * Off/On"). Only the USB-level bookkeeping restarts here: the ordering hold
+         * and the voice stream (Windows re-selects the alternate setting, and the
+         * SET_INTERFACE/SET_CONFIGURATION above flush SCO again). The bridge, its
+         * queues, the command accounting and the UART writer's pending work are
+         * untouched, so an acknowledged command still reaches the controller and
+         * its completion still reaches Windows, as on real hardware. The reply-replay
+         * history is kept too: the endpoint purge that follows a reset cancels
+         * parked reads, and a reply crossed by one of those unlinks must still be
+         * replayable to a later read.
+         */
         Device->HoldSince = 0;
         ScoFlush(Device);
         Device->Stats.PortResets++;
@@ -578,6 +630,7 @@ Control(USBIP_DEVICE *Device, unsigned long Seqnum, unsigned long Length,
         Device->Stats.Stalls++;
         TraceControl(Device, Setup, Data, (bm & BM_DIR_IN) ? 0u : Length, USBIP_EPIPE);
         (void)SendSimple(Device, Seqnum, USBIP_EPIPE, 0, NULL, 0);
+        AnsweredRecord(Device, Seqnum);
         return;
     }
     if (bm & BM_DIR_IN) {
@@ -587,6 +640,7 @@ Control(USBIP_DEVICE *Device, unsigned long Seqnum, unsigned long Length,
         TraceControl(Device, Setup, Data, Length, 0);
         (void)SendSimple(Device, Seqnum, 0, Length, NULL, 0);
     }
+    AnsweredRecord(Device, Seqnum);
     if (hciCommand) {
         /* The event this command produced may already have a reader waiting. */
         UsbipDeviceDrain(Device, Now);
@@ -610,16 +664,14 @@ void
 UsbipDeviceBeginSession(USBIP_DEVICE *Device)
 {
     Device->Broken = 0;
+    Device->Poisoned = 0;
     Device->Configuration = 0;
     Device->ScoAlt = 0;
     Device->EventIn.Count = 0;
     Device->AclIn.Count = 0;
     SentClear(&Device->EventSent);
     SentClear(&Device->AclSent);
-    Device->ScoOutQ.Head = Device->ScoOutQ.Count = 0;
-    Device->ScoInQ.Head = Device->ScoInQ.Count = 0;
-    Device->HoldSince = 0;
-    memset(&Device->Stats, 0, sizeof(Device->Stats));
+    Device->Answered.Head = Device->Answered.Count = 0;
     HciTransportReset(Device->Transport);
     ScoResetStreams(Device);
 }
@@ -724,13 +776,26 @@ UsbipDeviceHandle(USBIP_DEVICE *Device, const unsigned char Header[48],
             lostAcl = !lostEvent && SentMarkLost(&Device->AclSent, target);
             if (lostEvent || lostAcl) {
                 Device->Stats.RepliesLost++;
+            } else if (AnsweredContains(Device, target)) {
+                /* A write, control request or voice transfer: nothing the host cannot redo. */
+                Device->Stats.UnlinksAnswered++;
+            } else {
+                /*
+                 * An event or ACL reply aged out of the reply history. Windows cancelled
+                 * the read, usbip-win2 dropped the reply, and the packet can no longer be
+                 * delivered in its place. Continuing would feed BTHPORT a stream with a
+                 * permanent hole in it; end the session instead, and let the lost-session
+                 * recovery reset the radio and re-attach, which Windows handles as a replug.
+                 */
+                Device->Stats.UnlinksIrrecoverable++;
+                Device->Poisoned = 1;
             }
         }
         (void)SendRetUnlink(Device, seqnum, found ? USBIP_ECONNRESET : 0);
         if (lostEvent || lostAcl) {
             UsbipDeviceDrain(Device, Now);
         }
-        return !Device->Broken;
+        return !Device->Broken && !Device->Poisoned;
     }
 
     data = in ? NULL : Payload;
@@ -764,9 +829,11 @@ UsbipDeviceHandle(USBIP_DEVICE *Device, const unsigned char Header[48],
         } else if (HciTransportSubmitAcl(Device->Transport, data, length)) {
             Device->Stats.AclOut++;
             (void)SendSimple(Device, seqnum, 0, length, NULL, 0);
+            AnsweredRecord(Device, seqnum);
         } else {
             Device->Stats.Stalls++;
             (void)SendSimple(Device, seqnum, USBIP_EPIPE, 0, NULL, 0);
+            AnsweredRecord(Device, seqnum);
         }
         break;
 

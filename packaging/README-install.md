@@ -10,8 +10,8 @@ DeckBtService makes Bluetooth headset microphones work under Windows on the **St
 
 ## Install
 
-1. Download `DeckBtService-0.1.5.zip` from the project's [Releases page](https://github.com/ethanm0202/DeckBtService/releases).
-2. Right-click the zip, choose **Extract All**, and extract it to your Downloads folder. This creates a folder `DeckBtService-0.1.5`. Keep it somewhere only you can write to, such as Downloads or Documents, not a shared folder.
+1. Download `DeckBtService-0.1.6.zip` from the project's [Releases page](https://github.com/ethanm0202/DeckBtService/releases).
+2. Right-click the zip, choose **Extract All**, and extract it to your Downloads folder. This creates a folder `DeckBtService-0.1.6`. Keep it somewhere only you can write to, such as Downloads or Documents, not a shared folder.
 3. Open the folder and double-click **`install.cmd`**. Approve the administrator prompt.
 4. Wait for the window to report the result. It stays open until you close it.
 5. If it says **Restart Windows**, restart, then double-click `install.cmd` again. A first install needs one restart, because usbip-win2's own installer asks for one. The second run confirms that Bluetooth is up.
@@ -24,7 +24,7 @@ Keep the extracted folder: `uninstall.cmd` and `collect-diagnostics.cmd` are in 
 
 The programs are not code-signed. When you open `install.cmd` or the other launchers, Windows may show **Windows protected your PC** or warn about an **unknown publisher**. This is expected: choose **More info**, then **Run anyway** (or **Run**). The installer checks every file in the folder against the list in `SHA256SUMS` before installing it, and checks usbip-win2's installer against a fixed SHA-256 before running it.
 
-To check that the zip was built by the project's GitHub Actions workflow from its public source, install the [GitHub CLI](https://cli.github.com/) and run `gh attestation verify DeckBtService-0.1.5.zip --repo ethanm0202/DeckBtService` in the folder you downloaded it to. The installed programs can be checked the same way, for example `gh attestation verify "C:\Program Files\DeckBtService\deckbt-usbip.exe" --repo ethanm0202/DeckBtService`.
+To check that the zip was built by the project's GitHub Actions workflow from its public source, install the [GitHub CLI](https://cli.github.com/) and run `gh attestation verify DeckBtService-0.1.6.zip --repo ethanm0202/DeckBtService` in the folder you downloaded it to. The installed programs can be checked the same way, for example `gh attestation verify "C:\Program Files\DeckBtService\deckbt-usbip.exe" --repo ethanm0202/DeckBtService`.
 
 ## What the installer changes
 

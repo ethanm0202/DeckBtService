@@ -665,25 +665,82 @@ int main(void)
         CHECK(bridge.AvailableAclCredits == 4, "Completions for pre-reset packets mint no extra credit");
         HciTransportPopStream(&transport, HciStreamEvent, popBuf, sizeof(popBuf), &written);
 
-        /* A separate LE pool: the host may fill both pools at once, so none of it may be refused. */
+        /* Separate LE pool: a Classic link cannot borrow LE buffers, nor LE the shared pool. */
         ok = HciBridgeOnEvent(&bridge, leBufferSize, sizeof(leBufferSize));
         expEventsReceived++; expEventsQueued++;
         CHECK(bridge.LeTotalAclBuffers == 4, "LE pool learned from LE_Read_Buffer_Size (4)");
-        CHECK(bridge.AvailableAclCredits == 8, "Shared and LE pools both usable (credits 8)");
+        CHECK(bridge.AvailableAclCredits == 4 && bridge.AvailableLeCredits == 4,
+              "Separate pools learned (free 4/4)");
         HciTransportPopStream(&transport, HciStreamEvent, popBuf, sizeof(popBuf), &written);
 
-        for (i = 0; i < 8; i++) {
+        for (i = 0; i < 4; i++) {
             ok = HciTransportSubmitAcl(&transport, aclPkt44, sizeof(aclPkt44));
             expAclSubmitted++; expAclSentToWire++;
-            CHECK(ok == 1, "Packet %u/8 across both pools accepted", i + 1);
+            CHECK(ok == 1, "Classic packet %u/4 accepted on the BR/EDR pool", i + 1);
         }
+        CHECK(bridge.AvailableLeCredits == 4, "Classic sends leave the LE pool untouched");
         ok = HciTransportSubmitAcl(&transport, aclPkt44, sizeof(aclPkt44));
         expAclSubmitted++; expAclDroppedNoCredit++;
-        CHECK(ok == 0, "A ninth packet exceeds both pools and is refused");
+        CHECK(ok == 0, "A fifth Classic packet is refused while the LE pool sits free");
+
+        {
+            /*
+             * 0x0044's four packets fill the shared pool and its only handle slot. Free them
+             * with a genuine completion so the same handle can reopen on the LE pool.
+             */
+            const unsigned char connLe44[21] = { 0x3E, 0x13, 0x01, 0x00, 0x44, 0x00, 0x00, 0x01,
+                                                0xC5, 0xB3, 0xF2, 0xEF, 0xD9, 0xDF, 0x06, 0x00,
+                                                0x00, 0x00, 0xF4, 0x01, 0x00 };
+            const unsigned char compl44[7] = { 0x13, 0x05, 0x01, 0x44, 0x00, 0x04, 0x00 };
+            const unsigned char discLe44[6] = { 0x05, 0x04, 0x00, 0x44, 0x00, 0x16 };
+
+            ok = HciBridgeOnEvent(&bridge, compl44, sizeof(compl44));
+            expEventsReceived++; expEventsQueued++;
+            CHECK(ok == 1, "Classic Number_Of_Completed_Packets frees 0x0044's buffers");
+            CHECK(bridge.AvailableAclCredits == 4, "Shared pool full again");
+            HciTransportPopStream(&transport, HciStreamEvent, popBuf, sizeof(popBuf), &written);
+            ok = HciBridgeOnEvent(&bridge, connLe44, sizeof(connLe44));
+            expEventsReceived++; expEventsQueued++;
+            CHECK(ok == 1, "LE Connection Complete opens handle 0x0044 on the LE pool");
+            HciTransportPopStream(&transport, HciStreamEvent, popBuf, sizeof(popBuf), &written);
+
+            for (i = 0; i < 4; i++) {
+                ok = HciTransportSubmitAcl(&transport, aclPkt44, sizeof(aclPkt44));
+                expAclSubmitted++; expAclSentToWire++;
+                CHECK(ok == 1, "LE packet %u/4 accepted on the LE pool", i + 1);
+            }
+            CHECK(bridge.AvailableLeCredits == 0, "LE pool exhausted by LE sends");
+            CHECK(bridge.AvailableAclCredits == 4, "LE sends leave the shared pool untouched");
+            ok = HciTransportSubmitAcl(&transport, aclPkt44, sizeof(aclPkt44));
+            expAclSubmitted++; expAclDroppedNoCredit++;
+            CHECK(ok == 0, "A fifth LE packet is refused");
+
+            /* LE completions refill only the LE pool. */
+            ok = HciBridgeOnEvent(&bridge, compl44, sizeof(compl44));
+            expEventsReceived++; expEventsQueued++;
+            CHECK(ok == 1, "LE Number_Of_Completed_Packets accepted");
+            CHECK(bridge.AvailableLeCredits == 4 && bridge.AvailableAclCredits == 4,
+                  "LE completions refill the LE pool only");
+            HciTransportPopStream(&transport, HciStreamEvent, popBuf, sizeof(popBuf), &written);
+
+            /* An LE disconnection restores to the LE pool. */
+            for (i = 0; i < 4; i++) {
+                ok = HciTransportSubmitAcl(&transport, aclPkt44, sizeof(aclPkt44));
+                expAclSubmitted++; expAclSentToWire++;
+            }
+            CHECK(bridge.AvailableLeCredits == 0, "LE pool exhausted again");
+            ok = HciBridgeOnEvent(&bridge, discLe44, sizeof(discLe44));
+            expEventsReceived++; expEventsQueued++;
+            CHECK(ok == 1, "LE Disconnection_Complete queued");
+            CHECK(bridge.AvailableLeCredits == 4 && bridge.AvailableAclCredits == 4,
+                  "LE disconnection restores the LE pool");
+            HciTransportPopStream(&transport, HciStreamEvent, popBuf, sizeof(popBuf), &written);
+        }
 
         ok = HciBridgeOnEvent(&bridge, resetComplete, sizeof(resetComplete));
         expEventsReceived++; expEventsQueued++;
-        CHECK(bridge.AvailableAclCredits == 8, "HCI_Reset refills both pools");
+        CHECK(bridge.AvailableAclCredits == 4 && bridge.AvailableLeCredits == 4,
+              "HCI_Reset refills both pools");
         HciTransportPopStream(&transport, HciStreamEvent, popBuf, sizeof(popBuf), &written);
     }
 
@@ -917,8 +974,9 @@ int main(void)
         CHECK(HciTransportHasStream(&transport, HciStreamAcl) == 0, "ACL stream empty after Reset");
         CHECK(HciTransportHasStream(&transport, HciStreamSco) == 0, "SCO stream empty after Reset");
         CHECK(bridge.HeldCommandPending == 0, "Held command cleared after Reset");
-        CHECK(bridge.AvailableAclCredits == bridge.TotalAclBuffers + bridge.LeTotalAclBuffers,
-              "Credits restored to the whole pool after Reset");
+        CHECK(bridge.AvailableAclCredits == bridge.TotalAclBuffers &&
+              bridge.AvailableLeCredits == bridge.LeTotalAclBuffers,
+              "Credits restored to both pools after Reset");
     }
 
     /* =========================================================================
